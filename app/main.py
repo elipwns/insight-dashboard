@@ -53,14 +53,30 @@ def main():
         fig = px.pie(df, names='sentiment_label', title="Financial Sentiment Analysis (Star Ratings)")
         st.plotly_chart(fig, use_container_width=True)
         
-        # Sentiment over time if timestamp exists
-        if 'timestamp' in df.columns:
-            st.subheader("Sentiment Trends")
-            df['timestamp'] = pd.to_datetime(df['timestamp'])
-            sentiment_counts = df.groupby(['timestamp', 'sentiment_label']).size().reset_index(name='count')
-            fig_trend = px.line(sentiment_counts, x='timestamp', y='count', color='sentiment_label',
-                              title="Sentiment Trends Over Time")
-            st.plotly_chart(fig_trend, use_container_width=True)
+        # Sentiment by subreddit - more useful than time trends
+        if 'subreddit' in df.columns:
+            st.subheader("Sentiment by Community")
+            
+            # Create bullish/bearish categories
+            df['sentiment_category'] = df['sentiment_label'].map({
+                '1 star': 'Bearish',
+                '2 stars': 'Bearish', 
+                '3 stars': 'Neutral',
+                '4 stars': 'Bullish',
+                '5 stars': 'Bullish'
+            })
+            
+            # Group by subreddit and sentiment
+            subreddit_sentiment = df.groupby(['subreddit', 'sentiment_category']).size().unstack(fill_value=0)
+            subreddit_sentiment_pct = subreddit_sentiment.div(subreddit_sentiment.sum(axis=1), axis=0) * 100
+            
+            # Create stacked bar chart
+            fig_subreddit = px.bar(subreddit_sentiment_pct.reset_index(), 
+                                 x='subreddit', y=['Bullish', 'Neutral', 'Bearish'],
+                                 title="Sentiment Distribution by Subreddit (%)",
+                                 color_discrete_map={'Bullish': 'green', 'Bearish': 'red', 'Neutral': 'gray'})
+            fig_subreddit.update_layout(xaxis_tickangle=45)
+            st.plotly_chart(fig_subreddit, use_container_width=True)
     
     # Data table
     st.subheader("Recent Data")
