@@ -44,6 +44,36 @@ class DataLoader:
             return pd.DataFrame()
     
     @st.cache_data
+    def load_historical_data(_self) -> pd.DataFrame:
+        """Load historical data from S3 with caching"""
+        try:
+            objects = _self.s3_client.list_objects_v2(
+                Bucket=_self.bucket_name,
+                Prefix="raw-data/historical_data_"
+            )
+            
+            if not objects.get('Contents'):
+                return pd.DataFrame()
+            
+            # Get most recent historical file
+            latest = sorted(objects['Contents'], 
+                          key=lambda x: x['LastModified'], 
+                          reverse=True)[0]
+            
+            response = _self.s3_client.get_object(
+                Bucket=_self.bucket_name,
+                Key=latest['Key']
+            )
+            
+            csv_content = response['Body'].read().decode('utf-8')
+            df = pd.read_csv(StringIO(csv_content))
+            return df
+            
+        except Exception as e:
+            st.error(f"Error loading historical data: {e}")
+            return pd.DataFrame()
+    
+    @st.cache_data
     def load_price_data(_self) -> pd.DataFrame:
         """Load price data from S3 with caching"""
         try:
@@ -74,4 +104,37 @@ class DataLoader:
             
         except Exception as e:
             st.error(f"Error loading price data: {e}")
+            return pd.DataFrame()
+    
+    @st.cache_data
+    def load_trending_data(_self) -> pd.DataFrame:
+        """Load trending opportunities data from S3 with caching"""
+        try:
+            objects = _self.s3_client.list_objects_v2(
+                Bucket=_self.bucket_name,
+                Prefix="raw-data/trending_opportunities_"
+            )
+            
+            if not objects.get('Contents'):
+                return pd.DataFrame()
+            
+            all_trending_data = []
+            for obj in objects['Contents']:
+                response = _self.s3_client.get_object(
+                    Bucket=_self.bucket_name,
+                    Key=obj['Key']
+                )
+                csv_content = response['Body'].read().decode('utf-8')
+                df = pd.read_csv(StringIO(csv_content))
+                all_trending_data.append(df)
+            
+            if all_trending_data:
+                combined_df = pd.concat(all_trending_data, ignore_index=True)
+                combined_df['detected_at'] = pd.to_datetime(combined_df['detected_at'])
+                return combined_df
+            
+            return pd.DataFrame()
+            
+        except Exception as e:
+            st.error(f"Error loading trending data: {e}")
             return pd.DataFrame()
