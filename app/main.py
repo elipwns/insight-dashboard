@@ -94,7 +94,12 @@ def presentation_page():
     if not df.empty and 'timestamp' in df.columns:
         df['timestamp'] = pd.to_datetime(df['timestamp'])
         latest_data_time = df['timestamp'].max()
-        hours_old = (pd.Timestamp.now() - latest_data_time).total_seconds() / 3600
+        # Convert to UTC for consistent comparison
+        if latest_data_time.tz is None:
+            # Assume UTC if no timezone info
+            latest_data_time = latest_data_time.tz_localize('UTC')
+        now_utc = pd.Timestamp.now(tz='UTC')
+        hours_old = (now_utc - latest_data_time).total_seconds() / 3600
         
         if hours_old < 6:
             freshness_color = "green"
