@@ -3,12 +3,105 @@ import pandas as pd
 import plotly.express as px
 import sys
 import os
+import json
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.data_loader import DataLoader
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
+from monthly_predictions_page import monthly_predictions_page
 
 load_dotenv()
+
+def create_sentiment_gauge(value, title, size='large', show_delta=False, delta_ref=None):
+    """Standardized sentiment gauge with dynamic zone highlighting"""
+    import plotly.graph_objects as go
+    
+    # Create progressive filling based on value
+    dim_color = "#2A2A2A"  # Dark gray for unfilled zones
+    steps = []
+    zones = [(0, 20), (20, 40), (40, 60), (60, 80), (80, 100)]
+    zone_colors = ["#DC143C", "#FF6347", "#FFD700", "#32CD32", "#228B22"]
+    
+    for i, (start, end) in enumerate(zones):
+        if value > end:
+            # Zone completely filled
+            steps.append({'range': [start, end], 'color': zone_colors[i]})
+        elif value > start:
+            # Zone partially filled - split into filled and unfilled parts
+            steps.append({'range': [start, value], 'color': zone_colors[i]})
+            steps.append({'range': [value, end], 'color': dim_color})
+        else:
+            # Zone not filled at all
+            steps.append({'range': [start, end], 'color': dim_color})
+    
+    # Get color for the current zone for text/number display
+    active_color = "white"  # Default
+    for i, (start, end) in enumerate(zones):
+        if start < value <= end:
+            active_color = zone_colors[i]
+            break
+    
+    # Size configurations
+    if size == 'large':
+        height = 400
+        title_size = 24
+        number_size = 40
+        bar_thickness = 0.3
+    else:  # mini
+        height = 200
+        title_size = 14
+        number_size = 20
+        bar_thickness = 0.2
+    
+    # Build gauge
+    mode = "gauge+number"
+    if show_delta and delta_ref is not None:
+        mode += "+delta"
+    
+    indicator = go.Indicator(
+        mode=mode,
+        value=value,
+        domain={'x': [0, 1], 'y': [0, 1]},
+        title={
+            'text': f"<b style='color:white'>{title}</b>",
+            'font': {'size': title_size, 'color': 'white'}
+        },
+        number={'valueformat': '.0f', 'suffix': '%', 'font': {'size': number_size, 'color': 'white'}},
+        gauge={
+            'axis': {
+                'range': [None, 100],
+                'tickwidth': 2,
+                'tickcolor': "white",
+                'tickfont': {'color': 'white'},
+                'tickmode': 'array',
+                'tickvals': [0, 20, 40, 60, 80, 100],
+                'ticktext': ['0', '20', '40', '60', '80', '100']
+            },
+            'bar': {'color': 'rgba(0,0,0,0)'},  # Hide bar completely
+            'bgcolor': "rgba(0,0,0,0.1)",
+            'borderwidth': 2,
+            'bordercolor': "white",
+            'steps': steps
+        }
+    )
+    
+    if show_delta and delta_ref is not None:
+        indicator.delta = {'reference': delta_ref, 'valueformat': '.0f', 'suffix': ' vs last week', 'font': {'color': 'white'}}
+    
+    fig = go.Figure(indicator)
+    
+    # No needle or shapes needed - gauge fills progressively
+    
+    fig.update_layout(
+        height=height,
+        font={'color': "white", 'family': "Arial"},
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        margin=dict(l=10, r=10, t=30, b=10) if size == 'mini' else dict(l=20, r=20, t=40, b=20),
+        xaxis=dict(scaleanchor="y", scaleratio=1)  # Force 1:1 aspect ratio for circular shapes
+    )
+    
+    return fig
 
 st.set_page_config(
     page_title="Trading Insights",
@@ -17,7 +110,7 @@ st.set_page_config(
 )
 
 # Auto-refresh configuration
-AUTO_REFRESH_INTERVAL = 21600  # 6 hours in seconds (4x daily checks)
+AUTO_REFRESH_INTERVAL = 21600  # 6 hours in seconds (matches data collection frequency)
 
 # Add auto-refresh functionality
 def add_auto_refresh():
@@ -134,61 +227,31 @@ def presentation_page():
         bearish_pct = (recent_df['sentiment_label'].isin(['1 star', '2 stars'])).mean() * 100
         needle_value = bullish_pct + (neutral_pct * 0.5)
         
-        # Calculate last week sentiment for comparison
+        # Calculate last week sentiment for comparison (only if we have enough data)
         week_ago_cutoff = pd.Timestamp.now() - pd.Timedelta(days=10)
         last_week_cutoff = pd.Timestamp.now() - pd.Timedelta(days=3)
         last_week_df = df[(df['timestamp'] >= week_ago_cutoff) & (df['timestamp'] < last_week_cutoff)].copy()
         
-        if not last_week_df.empty:
+        show_delta = False
+        last_week_needle = None
+        
+        if not last_week_df.empty and len(last_week_df) >= 10:  # Need at least 10 data points
             last_week_bullish = (last_week_df['sentiment_label'].isin(['4 stars', '5 stars'])).mean() * 100
             last_week_neutral = (last_week_df['sentiment_label'] == '3 stars').mean() * 100
             last_week_needle = last_week_bullish + (last_week_neutral * 0.5)
-        else:
-            last_week_needle = 50  # Default to neutral if no data
+            show_delta = True
         
         st.subheader("🌡️ Market Sentiment Gauge")
         
         import plotly.graph_objects as go
         
-        # Create enhanced gauge with fire danger styling
-        fig = go.Figure(go.Indicator(
-            mode = "gauge+number+delta",
-            value = needle_value,
-            domain = {'x': [0, 1], 'y': [0, 1]},
-            title = {
-                'text': "<b>Market Sentiment</b><br><span style='font-size:0.8em;color:gray'>Community Pulse</span>",
-                'font': {'size': 24}
-            },
-            delta = {'reference': last_week_needle, 'valueformat': '.0f', 'suffix': ' vs last week'},
-            number = {'valueformat': '.0f', 'suffix': '%', 'font': {'size': 40}},
-            gauge = {
-                'axis': {
-                    'range': [None, 100],
-                    'tickwidth': 1,
-                    'tickcolor': "darkblue",
-                    'tickmode': 'array',
-                    'tickvals': [0, 20, 40, 60, 80, 100],
-                    'ticktext': ['0', '20', '40', '60', '80', '100']
-                },
-                'bar': {'color': "darkblue", 'thickness': 0.2},
-                'bgcolor': "white",
-                'borderwidth': 2,
-                'bordercolor': "gray",
-                'steps': [
-                    {'range': [0, 20], 'color': "#DC143C"},    # Extreme Bearish (Dark Red)
-                    {'range': [20, 40], 'color': "#FF6347"},   # Bearish (Tomato)
-                    {'range': [40, 60], 'color': "#FFD700"},   # Neutral (Gold)
-                    {'range': [60, 80], 'color': "#32CD32"},   # Bullish (Lime Green)
-                    {'range': [80, 100], 'color': "#228B22"}   # Extreme Bullish (Forest Green)
-                ]
-            }
-        ))
-        
-        fig.update_layout(
-            height=400,
-            font={'color': "black", 'family': "Arial"},
-            paper_bgcolor='rgba(0,0,0,0)',
-            plot_bgcolor='rgba(0,0,0,0)'
+        # Use standardized gauge
+        fig = create_sentiment_gauge(
+            value=needle_value,
+            title="Market Sentiment<br><span style='font-size:0.8em;color:lightgray'>Community Pulse</span>",
+            size='large',
+            show_delta=show_delta,
+            delta_ref=last_week_needle
         )
         
         st.plotly_chart(fig, use_container_width=True)
@@ -327,35 +390,72 @@ def presentation_page():
                             cat_needle = cat_bullish + (cat_neutral * 0.5)
                             
                             # Create mini gauge for category
-                            fig_cat = go.Figure(go.Indicator(
-                                mode = "gauge+number",
-                                value = cat_needle,
-                                domain = {'x': [0, 1], 'y': [0, 1]},
-                                title = {'text': f"<b>{category}</b>", 'font': {'size': 16}},
-                                number = {'valueformat': '.0f', 'suffix': '%', 'font': {'size': 24}},
-                                gauge = {
-                                    'axis': {'range': [None, 100], 'tickwidth': 1, 'tickcolor': "darkblue"},
-                                    'bar': {'color': "darkblue", 'thickness': 0.15},
-                                    'bgcolor': "white",
-                                    'borderwidth': 1,
-                                    'bordercolor': "gray",
-                                    'steps': [
-                                        {'range': [0, 20], 'color': "#DC143C"},
-                                        {'range': [20, 40], 'color': "#FF6347"},
-                                        {'range': [40, 60], 'color': "#FFD700"},
-                                        {'range': [60, 80], 'color': "#32CD32"},
-                                        {'range': [80, 100], 'color': "#228B22"}
-                                    ]
-                                }
-                            ))
-                            
-                            fig_cat.update_layout(height=250, margin=dict(l=20, r=20, t=40, b=20))
+                            fig_cat = create_sentiment_gauge(
+                                value=cat_needle,
+                                title=category,
+                                size='mini'
+                            )
                             st.plotly_chart(fig_cat, use_container_width=True)
                             
                             # Show breakdown percentages
                             st.caption(f"🟢 {cat_bullish:.0f}% • ⚪ {cat_neutral:.0f}% • 🔴 {category_sentiment_pct.loc[category, 'Bearish'] if 'Bearish' in category_sentiment_pct.columns else 0:.0f}%")
     
     st.markdown("---")
+    
+    # Monthly Prediction Performance (only show if real data exists)
+    try:
+        response = loader.s3_client.get_object(
+            Bucket=loader.bucket_name,
+            Key="predictions/monthly_predictions.json"
+        )
+        predictions_data = json.loads(response['Body'].read().decode('utf-8'))
+        performance_data = predictions_data.get('performance', [])
+        
+        if performance_data:
+            st.subheader("🎯 Monthly Prediction Performance")
+            
+            # Get last 3 performances for rolling display
+            recent_performance = performance_data[-3:]
+            
+            cols = st.columns(len(recent_performance))
+            for i, perf in enumerate(recent_performance):
+                with cols[i]:
+                    rating = perf['rating']
+                    symbol = perf['symbol']
+                    error = perf['error_pct']
+                    month = perf['target_month']
+                    
+                    if rating == 'Excellent':
+                        st.success(f"🎉 **{rating}** 🎉")
+                    elif rating == 'Good':
+                        st.success(f"✅ **{rating}**")
+                    elif rating == 'Fair':
+                        st.info(f"⚖️ **{rating}**")
+                    elif rating == 'Poor':
+                        st.warning(f"⚠️ **{rating}**")
+                    else:  # Failed
+                        st.error(f"❌ **{rating}**")
+                    
+                    st.caption(f"{symbol} {month}")
+                    st.caption(f"{error:.1f}% error")
+            
+            # Overall stats
+            if len(performance_data) >= 3:
+                excellent_count = sum(1 for p in performance_data if p['rating'] == 'Excellent')
+                good_count = sum(1 for p in performance_data if p['rating'] == 'Good')
+                success_rate = ((excellent_count + good_count) / len(performance_data)) * 100
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("🏆 Excellent", excellent_count)
+                with col2:
+                    st.metric("✅ Good", good_count)
+                with col3:
+                    st.metric("Success Rate", f"{success_rate:.0f}%")
+            
+            st.markdown("---")
+    except:
+        pass  # No predictions data available
     
     # Price vs Sentiment Analysis (Historical Trends)
     price_df = loader.load_price_data()
@@ -1066,181 +1166,7 @@ def indicators_page():
         
         st.dataframe(features_df, use_container_width=True)
 
-def predictions_page():
-    st.title("🔮 Price Predictions")
-    st.markdown("*AI-powered price forecasting (Demo)*")
-    st.markdown("---")
-    
-    # Demo predictions with synthetic data
-    st.info("📊 **Demo Mode**: Using synthetic data for model demonstration")
-    
-    # Asset selector
-    asset = st.selectbox("Select Asset:", ['BTC', 'ETH'], key="pred_asset")
-    
-    # Generate demo predictions
-    import numpy as np
-    np.random.seed(42)
-    
-    current_price = 102000 if asset == 'BTC' else 3800
-    
-    # Prediction timeframes with confidence
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        pred_1h = current_price * (1 + np.random.normal(0.001, 0.01))
-        change_1h = ((pred_1h - current_price) / current_price) * 100
-        st.metric("1 Hour", f"${pred_1h:.0f}", f"{change_1h:+.2f}%")
-        st.caption("Confidence: 65%")
-    
-    with col2:
-        pred_1d = current_price * (1 + np.random.normal(0.02, 0.03))
-        change_1d = ((pred_1d - current_price) / current_price) * 100
-        st.metric("1 Day", f"${pred_1d:.0f}", f"{change_1d:+.2f}%")
-        st.caption("Confidence: 58%")
-    
-    with col3:
-        pred_3d = current_price * (1 + np.random.normal(0.05, 0.05))
-        change_3d = ((pred_3d - current_price) / current_price) * 100
-        st.metric("3 Days", f"${pred_3d:.0f}", f"{change_3d:+.2f}%")
-        st.caption("Confidence: 52%")
-    
-    with col4:
-        pred_7d = current_price * (1 + np.random.normal(0.08, 0.08))
-        change_7d = ((pred_7d - current_price) / current_price) * 100
-        st.metric("7 Days", f"${pred_7d:.0f}", f"{change_7d:+.2f}%")
-        st.caption("Confidence: 48%")
-    
-    st.markdown("---")
-    
-    # Model Performance Section
-    st.subheader("🎯 Model Performance")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("**Direction Accuracy (Last 30 Days)**")
-        st.metric("Correct Predictions", "17/30", "57%")
-        st.progress(0.57)
-        
-        st.markdown("**Feature Importance**")
-        features_df = pd.DataFrame({
-            'Feature': ['Sentiment Mean', 'RSI', 'Volume Ratio', 'SMA 7'],
-            'Importance': [0.28, 0.25, 0.24, 0.23]
-        })
-        
-        import plotly.express as px
-        fig = px.bar(features_df, x='Importance', y='Feature', orientation='h')
-        fig.update_layout(height=300)
-        st.plotly_chart(fig, use_container_width=True)
-    
-    with col2:
-        st.markdown("**Return Prediction Error**")
-        st.metric("Mean Absolute Error", "4.2%", "-0.8%")
-        st.progress(0.75)  # Lower error = better (inverted)
-        
-        st.markdown("**Model Status**")
-        st.success("✅ Models trained and active")
-        st.info("📊 Training data: 99 samples")
-        st.warning("⚠️ Demo mode - not for trading")
-    
-    st.markdown("---")
-    
-    # Prediction Chart
-    st.subheader("📈 Prediction Visualization")
-    
-    # Generate sample historical + prediction data ending today
-    from datetime import datetime, timedelta
-    end_date = datetime.now().date()
-    start_date = end_date - timedelta(days=39)
-    dates = pd.date_range(start=start_date, end=end_date + timedelta(days=10), freq='D')
-    historical_prices = []
-    price = current_price * 0.92
-    
-    for i in range(30):  # 30 days historical
-        price *= (1 + np.random.normal(0.01, 0.02))
-        historical_prices.append(price)
-    
-    # Future predictions
-    future_prices = []
-    for i in range(10):  # 10 days future
-        price *= (1 + np.random.normal(0.015, 0.025))
-        future_prices.append(price)
-    
-    # Create chart
-    import plotly.graph_objects as go
-    
-    fig = go.Figure()
-    
-    # Historical prices
-    fig.add_trace(go.Scatter(
-        x=dates[:30],
-        y=historical_prices,
-        mode='lines',
-        name='Historical Price',
-        line=dict(color='white', width=3)
-    ))
-    
-    # Predicted prices
-    fig.add_trace(go.Scatter(
-        x=dates[29:],  # Overlap last historical point
-        y=[historical_prices[-1]] + future_prices,
-        mode='lines',
-        name='Predicted Price',
-        line=dict(color='orange', width=3, dash='dash')
-    ))
-    
-    # Confidence bands - fan out from current price like a triangle
-    current_price_point = historical_prices[-1]
-    future_dates = dates[29:]
-    
-    # Create expanding confidence bands that start narrow and widen over time
-    upper_band = []
-    lower_band = []
-    
-    for i, (date, price) in enumerate(zip(future_dates, [current_price_point] + future_prices)):
-        # Expand uncertainty linearly with time (starts at 1% and grows to 15%)
-        uncertainty = 0.01 + (i * 0.014)  # 1% to 15% over 10 days
-        upper_band.append(price * (1 + uncertainty))
-        lower_band.append(price * (1 - uncertainty))
-    
-    fig.add_trace(go.Scatter(
-        x=dates[29:],
-        y=upper_band,
-        fill=None,
-        mode='lines',
-        line_color='rgba(0,0,0,0)',
-        showlegend=False
-    ))
-    
-    fig.add_trace(go.Scatter(
-        x=dates[29:],
-        y=lower_band,
-        fill='tonexty',
-        mode='lines',
-        line_color='rgba(0,0,0,0)',
-        name='Confidence Band',
-        fillcolor='rgba(255,165,0,0.2)'
-    ))
-    
-    fig.update_layout(
-        title=f"{asset} Price Prediction",
-        xaxis_title="Date",
-        yaxis_title="Price ($)",
-        height=500
-    )
-    
-    st.plotly_chart(fig, use_container_width=True)
-    
-    # Disclaimers
-    st.markdown("---")
-    st.error("⚠️ **IMPORTANT DISCLAIMERS**")
-    st.markdown("""
-    - This is NOT financial advice
-    - Demo mode with synthetic data
-    - Models are experimental and unvalidated
-    - Do not use for actual trading decisions
-    - Past performance does not predict future results
-    """)
+
 
 def debug_page():
     st.title("🔧 Debug & System Status")
@@ -1557,34 +1483,12 @@ def tesla_watch_page():
         
         import plotly.graph_objects as go
         
-        fig = go.Figure(go.Indicator(
-            mode = "gauge+number",
-            value = needle_value,
-            domain = {'x': [0, 1], 'y': [0, 1]},
-            title = {'text': "<b>Tesla Community Sentiment</b>", 'font': {'size': 20}},
-            number = {'valueformat': '.0f', 'suffix': '%', 'font': {'size': 32}},
-            gauge = {
-                'axis': {'range': [None, 100]},
-                'bar': {'color': "red", 'thickness': 0.3},
-                'bgcolor': "white",
-                'borderwidth': 2,
-                'bordercolor': "gray",
-                'steps': [
-                    {'range': [0, 20], 'color': "#8B0000"},    # Dark Red
-                    {'range': [20, 40], 'color': "#DC143C"},   # Crimson
-                    {'range': [40, 60], 'color': "#FFD700"},   # Gold
-                    {'range': [60, 80], 'color': "#32CD32"},   # Lime Green
-                    {'range': [80, 100], 'color': "#228B22"}   # Forest Green
-                ],
-                'threshold': {
-                    'line': {'color': "red", 'width': 4},
-                    'thickness': 0.75,
-                    'value': 90
-                }
-            }
-        ))
-        
-        fig.update_layout(height=350, font={'color': "black"})
+        fig = create_sentiment_gauge(
+            value=needle_value,
+            title="Tesla Community Sentiment",
+            size='large'
+        )
+        fig.update_layout(height=350)
         st.plotly_chart(fig, use_container_width=True)
         
         # Tesla-specific interpretation
@@ -1705,6 +1609,249 @@ def tesla_watch_page():
     This analysis is for informational purposes only and not financial advice.
     """)
 
+def ipo_page():
+    st.title("🏢 IPO Tracker")
+    st.markdown("*Sentiment analysis for recent and upcoming IPOs*")
+    st.markdown("---")
+    
+    loader = DataLoader()
+    df = loader.load_processed_data()
+    
+    if df.empty:
+        st.warning("No data available. Please run the data collection pipeline.")
+        return
+    
+    # IPO symbols to track
+    ipo_symbols = ['BLSH', 'RIVN', 'LCID', 'HOOD', 'COIN', 'RBLX']
+    
+    # Filter IPO-related posts
+    ipo_keywords = ['ipo', 'bullish', 'blsh'] + [s.lower() for s in ipo_symbols]
+    ipo_pattern = '|'.join(ipo_keywords)
+    
+    ipo_posts = df[
+        df['title'].astype(str).str.contains(ipo_pattern, case=False, na=False) |
+        df['content'].astype(str).str.contains(ipo_pattern, case=False, na=False)
+    ].copy()
+    
+    # IPO Sentiment Grid (3x3)
+    st.subheader("📊 IPO Sentiment Dashboard")
+    
+    # Track 9 IPO symbols
+    ipo_symbols = ['BLSH', 'RIVN', 'LCID', 'HOOD', 'COIN', 'RBLX', 'SNOW', 'ABNB', 'UBER']
+    
+    import plotly.graph_objects as go
+    
+    # Create 3x3 grid
+    for row in range(3):
+        cols = st.columns(3)
+        for col_idx in range(3):
+            symbol_idx = row * 3 + col_idx
+            if symbol_idx < len(ipo_symbols):
+                symbol = ipo_symbols[symbol_idx]
+                
+                with cols[col_idx]:
+                    # Filter posts for this symbol
+                    symbol_posts = df[
+                        df['title'].astype(str).str.contains(symbol.lower(), case=False, na=False) |
+                        df['content'].astype(str).str.contains(symbol.lower(), case=False, na=False)
+                    ].copy()
+                    
+                    if not symbol_posts.empty and 'sentiment_label' in symbol_posts.columns:
+                        bullish_pct = (symbol_posts['sentiment_label'].isin(['4 stars', '5 stars'])).mean() * 100
+                        neutral_pct = (symbol_posts['sentiment_label'] == '3 stars').mean() * 100
+                        needle_value = bullish_pct + (neutral_pct * 0.5)
+                        post_count = len(symbol_posts)
+                    else:
+                        needle_value = 50  # Neutral if no data
+                        post_count = 0
+                    
+                    # Mini gauge with standardized function
+                    fig = create_sentiment_gauge(
+                        value=needle_value,
+                        title=symbol,
+                        size='mini'
+                    )
+                    fig.update_layout(height=180, margin=dict(l=5, r=5, t=35, b=5))  # More top margin for title
+                    st.plotly_chart(fig, use_container_width=True)
+                    st.caption(f"{post_count} posts")
+        
+    # Recent IPO discussions
+    st.subheader("📝 Recent IPO Discussions")
+    
+    if not ipo_posts.empty:
+        if 'timestamp' in ipo_posts.columns:
+            ipo_posts['timestamp'] = pd.to_datetime(ipo_posts['timestamp'])
+            recent_ipo = ipo_posts.sort_values('timestamp', ascending=False).head(5)
+        else:
+            recent_ipo = ipo_posts.head(5)
+        
+        for idx, post in recent_ipo.iterrows():
+            subreddit = str(post.get('subreddit', 'unknown'))
+            with st.expander(f"r/{subreddit} - {post.get('sentiment_label', 'N/A')}"):
+                title = str(post.get('title', 'No title'))
+                title = title[:100] + "..." if len(title) > 100 else title
+                st.write(f"**{title}**")
+                if pd.notna(post.get('content')) and len(str(post.get('content'))) > 0:
+                    content = str(post.get('content'))[:200] + "..." if len(str(post.get('content'))) > 200 else str(post.get('content'))
+                    st.write(content)
+                st.caption(f"Sentiment: {post.get('sentiment_label', 'N/A')} | Platform: {post.get('platform', 'Reddit')}")
+    else:
+        st.info("No IPO-related posts found in recent data.")
+        st.caption("The system will start tracking IPO sentiment as discussions emerge.")
+    
+    st.markdown("---")
+    
+    # Other IPO tracking
+    st.subheader("📈 Other IPO Sentiment")
+    
+    if not ipo_posts.empty:
+        # IPO category breakdown
+        other_ipos = ipo_posts[~ipo_posts['title'].astype(str).str.contains('bullish|blsh', case=False, na=False)]
+        
+        if not other_ipos.empty:
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.metric("Other IPO Posts", len(other_ipos))
+                if 'sentiment_label' in other_ipos.columns:
+                    other_bullish = (other_ipos['sentiment_label'].isin(['4 stars', '5 stars'])).mean() * 100
+                    st.metric("Avg Bullish %", f"{other_bullish:.0f}%")
+            
+            with col2:
+                # Most mentioned IPO symbols
+                all_text = " ".join(other_ipos['title'].astype(str) + " " + other_ipos['content'].astype(str))
+                symbol_mentions = {}
+                for symbol in ipo_symbols:
+                    if symbol != 'BLSH':
+                        count = all_text.upper().count(symbol)
+                        if count > 0:
+                            symbol_mentions[symbol] = count
+                
+                if symbol_mentions:
+                    top_symbol = max(symbol_mentions, key=symbol_mentions.get)
+                    st.metric("Most Mentioned", f"{top_symbol} ({symbol_mentions[top_symbol]})")
+        else:
+            st.info("No other IPO discussions found.")
+    
+    # IPO risk warning
+    st.markdown("---")
+    st.error("""
+    ⚠️ **IPO INVESTMENT RISKS**
+    
+    IPOs carry significant risks:
+    - Limited trading history and price discovery
+    - Lock-up period expirations can cause selling pressure
+    - Hype-driven pricing often leads to volatility
+    - Insider selling after lock-up periods
+    - Market conditions can dramatically affect performance
+    
+    This analysis is for informational purposes only.
+    """)
+
+def ai_insights_page():
+    st.title("🧠 AI Insights")
+    st.markdown("*What the AI is seeing in financial discussions*")
+    st.markdown("---")
+    
+    loader = DataLoader()
+    df = loader.load_processed_data()
+    
+    if df.empty:
+        st.warning("No data available for AI analysis.")
+        return
+    
+    # Word frequency analysis
+    st.subheader("📝 Most Common Words")
+    
+    # Combine all text content
+    all_text = ""
+    for _, row in df.iterrows():
+        title = str(row.get('title', ''))
+        content = str(row.get('content', ''))
+        all_text += f" {title} {content}"
+    
+    # Basic word processing
+    import re
+    words = re.findall(r'\b\w+\b', all_text.lower())
+    
+    # Filter out common stop words and nan values
+    stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'must', 'can', 'this', 'that', 'these', 'those', 'i', 'you', 'he', 'she', 'it', 'we', 'they', 'me', 'him', 'her', 'us', 'them', 'my', 'your', 'his', 'her', 'its', 'our', 'their', 'nan', 'none', 'null'}
+    
+    filtered_words = [word for word in words if word not in stop_words and len(word) > 2 and word != 'nan']
+    
+    # Count word frequency
+    from collections import Counter
+    word_counts = Counter(filtered_words)
+    
+    # Display top words
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.write("**Top 20 Words:**")
+        top_words = word_counts.most_common(20)
+        for word, count in top_words:
+            st.write(f"{word}: {count}")
+    
+    with col2:
+        # Top financial terms chart
+        if top_words:
+            import plotly.graph_objects as go
+            
+            # Create bar chart of top 10 words
+            top_10 = top_words[:10]
+            words, counts = zip(*top_10)
+            
+            fig = go.Figure(data=[
+                go.Bar(x=list(words), y=list(counts), marker_color='#FF9500')
+            ])
+            fig.update_layout(
+                title="Top Financial Terms",
+                xaxis_title="Words",
+                yaxis_title="Frequency",
+                height=300
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No words to display")
+    
+    # Sentiment by category analysis
+    if 'category' in df.columns and 'sentiment_label' in df.columns:
+        st.subheader("📈 AI Sentiment Analysis by Category")
+        
+        category_sentiment = df.groupby(['category', 'sentiment_label']).size().unstack(fill_value=0)
+        
+        import plotly.express as px
+        
+        # Convert to percentage
+        category_sentiment_pct = category_sentiment.div(category_sentiment.sum(axis=1), axis=0) * 100
+        
+        fig = px.bar(category_sentiment_pct, 
+                    title="AI Sentiment Distribution by Category",
+                    labels={'value': 'Percentage', 'index': 'Category'})
+        st.plotly_chart(fig, use_container_width=True)
+    
+    # Recent AI processing stats
+    st.subheader("🤖 AI Processing Statistics")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("Total Texts Analyzed", len(df))
+    
+    with col2:
+        if 'sentiment_score' in df.columns:
+            avg_confidence = df['sentiment_score'].mean()
+            st.metric("Avg AI Confidence", f"{avg_confidence:.3f}")
+    
+    with col3:
+        unique_words = len(set(filtered_words))
+        st.metric("Unique Words Found", unique_words)
+    
+    with col4:
+        if 'sentiment_label' in df.columns:
+            sentiment_variety = df['sentiment_label'].nunique()
+            st.metric("Sentiment Categories", sentiment_variety)
+
 def main():
     # Back to main site link
     st.sidebar.markdown("---")
@@ -1733,14 +1880,15 @@ def main():
         AUTO_REFRESH_INTERVAL = 0
     
     # Page navigation
-    page = st.sidebar.selectbox("Navigate", ["📊 Insights", "🔮 Predictions", "🔥 Trending", "📈 Indicators", "🌍 Macro Analysis", "🧠 AI Insights", "⚡ Tesla Watch", "🔧 Debug"], key="page_nav")
+    page = st.sidebar.selectbox("Navigate", ["📊 Insights", "🏢 IPOs", "📅 Monthly Predictions", "📈 Indicators", "🌍 Macro Analysis", "🧠 AI Insights", "⚡ Tesla Watch", "🔧 Debug"], key="page_nav")
     
     if page == "📊 Insights":
         presentation_page()
-    elif page == "🔮 Predictions":
-        predictions_page()
-    elif page == "🔥 Trending":
-        trending_opportunities_page()
+    elif page == "🏢 IPOs":
+        ipo_page()
+    elif page == "📅 Monthly Predictions":
+        monthly_predictions_page()
+
     elif page == "📈 Indicators":
         indicators_page()
     elif page == "🌍 Macro Analysis":
