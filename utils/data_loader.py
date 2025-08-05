@@ -9,7 +9,7 @@ class DataLoader:
         self.s3_client = boto3.client('s3')
         self.bucket_name = os.getenv('S3_BUCKET_NAME')
     
-    @st.cache_data
+    @st.cache_data(ttl=1800)  # 30 minutes TTL
     def load_processed_data(_self, filename: str = None) -> pd.DataFrame:
         """Load processed data from S3 with caching"""
         try:
@@ -43,7 +43,7 @@ class DataLoader:
             st.error(f"Error loading data: {e}")
             return pd.DataFrame()
     
-    @st.cache_data
+    @st.cache_data(ttl=3600)  # 1 hour TTL
     def load_historical_data(_self) -> pd.DataFrame:
         """Load historical data from S3 with caching"""
         try:
@@ -73,7 +73,7 @@ class DataLoader:
             st.error(f"Error loading historical data: {e}")
             return pd.DataFrame()
     
-    @st.cache_data
+    @st.cache_data(ttl=1800)  # 30 minutes TTL
     def load_price_data(_self) -> pd.DataFrame:
         """Load price data from S3 with caching"""
         try:
@@ -106,7 +106,7 @@ class DataLoader:
             st.error(f"Error loading price data: {e}")
             return pd.DataFrame()
     
-    @st.cache_data
+    @st.cache_data(ttl=1800)  # 30 minutes TTL
     def load_trending_data(_self) -> pd.DataFrame:
         """Load trending opportunities data from S3 with caching"""
         try:
