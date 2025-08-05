@@ -32,7 +32,21 @@ def monthly_predictions_page():
     current_month = datetime.now().strftime('%Y-%m')
     next_month = (datetime.now().replace(day=1) + timedelta(days=32)).strftime('%Y-%m')
     
-    current_predictions = [p for p in predictions_data.get('predictions', []) if p.get('target_month') == next_month]
+    # Get all predictions for next month, then keep only the most recent for each symbol
+    all_predictions = [p for p in predictions_data.get('predictions', []) if p.get('target_month') == next_month]
+    
+    # Group by symbol and keep only the most recent prediction for each
+    current_predictions = []
+    symbols_seen = set()
+    
+    # Sort by prediction_date descending to get most recent first
+    sorted_predictions = sorted(all_predictions, key=lambda x: x.get('prediction_date', ''), reverse=True)
+    
+    for pred in sorted_predictions:
+        symbol = pred['symbol']
+        if symbol not in symbols_seen:
+            current_predictions.append(pred)
+            symbols_seen.add(symbol)
     
     if current_predictions:
         st.subheader(f"🎯 Active Predictions for {next_month}")
@@ -258,7 +272,8 @@ def monthly_predictions_page():
             try:
                 # Import and run the monthly predictor
                 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-                from ai_workbench.monthly_predictor import MonthlyPredictor
+                sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'ai-workbench'))
+                from monthly_predictor import MonthlyPredictor
                 
                 predictor = MonthlyPredictor()
                 results = predictor.run_monthly_prediction_cycle()

@@ -561,6 +561,8 @@ def presentation_page():
                         content = str(row.get('content', ''))[:100]
                         sentiment = row.get('sentiment_label', 'N/A')
                         subreddit = row.get('subreddit', 'N/A')
+                        if pd.isna(subreddit) or str(subreddit).lower() == 'nan':
+                            subreddit = 'unknown'
                         st.write(f"**r/{subreddit}** | {sentiment}")
                         st.caption(f"{content}...")
                         st.write("---")
@@ -574,6 +576,8 @@ def presentation_page():
                         content = str(row.get('content', ''))[:100]
                         sentiment = row.get('sentiment_label', 'N/A')
                         author = row.get('author_handle', 'N/A')
+                        if pd.isna(author) or str(author).lower() == 'nan':
+                            author = 'unknown'
                         st.write(f"**@{author}** | {sentiment}")
                         st.caption(f"{content}...")
                         st.write("---")
@@ -1518,15 +1522,32 @@ def tesla_watch_page():
         recent_tesla = tesla_posts.head(10)
     
     for idx, post in recent_tesla.iterrows():
-        subreddit = str(post.get('subreddit', 'unknown'))
-        with st.expander(f"r/{subreddit} - {post.get('sentiment_label', 'N/A')}"):
-            title = str(post.get('title', 'No title'))
-            title = title[:100] + "..." if len(title) > 100 else title
-            st.write(f"**{title}**")
+        # Check if this is a Bluesky or Reddit post
+        platform = post.get('platform', 'reddit')
+        
+        if platform == 'bluesky':
+            author = post.get('author_handle', 'unknown')
+            source_display = f"@{author}"
+            # Bluesky metrics
+            likes = post.get('like_count', 0)
+            reposts = post.get('repost_count', 0)
+            metrics = f"Likes: {likes} | Reposts: {reposts}"
+        else:
+            # Reddit post
+            subreddit = post.get('subreddit', 'unknown')
+            if pd.isna(subreddit) or str(subreddit).lower() == 'nan':
+                subreddit = 'unknown'
+            source_display = f"r/{subreddit}"
+            # Reddit metrics
+            score = post.get('score', 'N/A')
+            comments = post.get('num_comments', 'N/A')
+            metrics = f"Score: {score} | Comments: {comments}"
+        
+        with st.expander(f"{source_display} - {post.get('sentiment_label', 'N/A')}"):
             if pd.notna(post.get('content')) and len(str(post.get('content'))) > 0:
                 content = str(post.get('content'))[:300] + "..." if len(str(post.get('content'))) > 300 else str(post.get('content'))
                 st.write(content)
-            st.caption(f"Sentiment: {post.get('sentiment_label', 'N/A')} | Score: {post.get('score', 'N/A')} | Comments: {post.get('num_comments', 'N/A')}")
+            st.caption(f"Sentiment: {post.get('sentiment_label', 'N/A')} | {metrics}")
     
     # Tesla risk factors
     st.subheader("⚠️ Tesla-Specific Risk Factors")
@@ -1656,24 +1677,44 @@ def ipo_page():
                         df['content'].astype(str).str.contains(symbol.lower(), case=False, na=False)
                     ].copy()
                     
-                    if not symbol_posts.empty and 'sentiment_label' in symbol_posts.columns:
-                        bullish_pct = (symbol_posts['sentiment_label'].isin(['4 stars', '5 stars'])).mean() * 100
-                        neutral_pct = (symbol_posts['sentiment_label'] == '3 stars').mean() * 100
-                        needle_value = bullish_pct + (neutral_pct * 0.5)
-                        post_count = len(symbol_posts)
-                    else:
-                        needle_value = 50  # Neutral if no data
-                        post_count = 0
+                    # Check if posts have sentiment data
+                    has_sentiment = not symbol_posts.empty and 'sentiment_label' in symbol_posts.columns and not symbol_posts['sentiment_label'].isna().all()
                     
-                    # Mini gauge with standardized function
-                    fig = create_sentiment_gauge(
-                        value=needle_value,
-                        title=symbol,
-                        size='mini'
-                    )
-                    fig.update_layout(height=180, margin=dict(l=5, r=5, t=35, b=5))  # More top margin for title
-                    st.plotly_chart(fig, use_container_width=True)
-                    st.caption(f"{post_count} posts")
+                    if has_sentiment:
+                        # Filter out posts with NaN sentiment
+                        symbol_posts = symbol_posts[symbol_posts['sentiment_label'].notna()]
+                        
+                        if not symbol_posts.empty:
+                            bullish_pct = (symbol_posts['sentiment_label'].isin(['4 stars', '5 stars'])).mean() * 100
+                            neutral_pct = (symbol_posts['sentiment_label'] == '3 stars').mean() * 100
+                            needle_value = bullish_pct + (neutral_pct * 0.5)
+                            post_count = len(symbol_posts)
+                            
+
+                            
+                            # Mini gauge with standardized function
+                            fig = create_sentiment_gauge(
+                                value=needle_value,
+                                title=symbol,
+                                size='mini'
+                            )
+                            fig.update_layout(height=180, margin=dict(l=5, r=5, t=35, b=5))
+                            st.plotly_chart(fig, use_container_width=True)
+                            st.caption(f"{post_count} posts")
+                        else:
+                            # Posts found but no valid sentiment
+                            st.write(f"**{symbol}**")
+                            st.write("📊")
+                            st.caption("No Sentiment")
+                            st.write("")
+                            st.write("")
+                    else:
+                        # No data - show placeholder
+                        st.write(f"**{symbol}**")
+                        st.write("📊")
+                        st.caption("No Data")
+                        st.write("")
+                        st.write("")
         
     # Recent IPO discussions
     st.subheader("📝 Recent IPO Discussions")
@@ -1686,15 +1727,23 @@ def ipo_page():
             recent_ipo = ipo_posts.head(5)
         
         for idx, post in recent_ipo.iterrows():
-            subreddit = str(post.get('subreddit', 'unknown'))
-            with st.expander(f"r/{subreddit} - {post.get('sentiment_label', 'N/A')}"):
-                title = str(post.get('title', 'No title'))
-                title = title[:100] + "..." if len(title) > 100 else title
-                st.write(f"**{title}**")
+            # Check if this is a Bluesky or Reddit post
+            platform = post.get('platform', 'reddit')
+            
+            if platform == 'bluesky':
+                author = post.get('author_handle', 'unknown')
+                source_display = f"@{author}"
+            else:
+                subreddit = post.get('subreddit', 'unknown')
+                if pd.isna(subreddit) or str(subreddit).lower() == 'nan':
+                    subreddit = 'unknown'
+                source_display = f"r/{subreddit}"
+            
+            with st.expander(f"{source_display} - {post.get('sentiment_label', 'N/A')}"):
                 if pd.notna(post.get('content')) and len(str(post.get('content'))) > 0:
                     content = str(post.get('content'))[:200] + "..." if len(str(post.get('content'))) > 200 else str(post.get('content'))
                     st.write(content)
-                st.caption(f"Sentiment: {post.get('sentiment_label', 'N/A')} | Platform: {post.get('platform', 'Reddit')}")
+                st.caption(f"Sentiment: {post.get('sentiment_label', 'N/A')} | Platform: {platform.title()}")
     else:
         st.info("No IPO-related posts found in recent data.")
         st.caption("The system will start tracking IPO sentiment as discussions emerge.")
