@@ -107,6 +107,39 @@ class DataLoader:
             return pd.DataFrame()
     
     @st.cache_data(ttl=1800)  # 30 minutes TTL
+    def load_fear_greed_data(_self) -> pd.DataFrame:
+        """Load Fear & Greed Index data from S3 with caching"""
+        try:
+            objects = _self.s3_client.list_objects_v2(
+                Bucket=_self.bucket_name,
+                Prefix="raw-data/fear_greed_index_"
+            )
+            
+            if not objects.get('Contents'):
+                return pd.DataFrame()
+            
+            all_fg_data = []
+            for obj in objects['Contents']:
+                response = _self.s3_client.get_object(
+                    Bucket=_self.bucket_name,
+                    Key=obj['Key']
+                )
+                csv_content = response['Body'].read().decode('utf-8')
+                df = pd.read_csv(StringIO(csv_content))
+                all_fg_data.append(df)
+            
+            if all_fg_data:
+                combined_df = pd.concat(all_fg_data, ignore_index=True)
+                combined_df['timestamp'] = pd.to_datetime(combined_df['timestamp'])
+                return combined_df.sort_values('timestamp')
+            
+            return pd.DataFrame()
+            
+        except Exception as e:
+            st.error(f"Error loading Fear & Greed data: {e}")
+            return pd.DataFrame()
+    
+    @st.cache_data(ttl=1800)  # 30 minutes TTL
     def load_trending_data(_self) -> pd.DataFrame:
         """Load trending opportunities data from S3 with caching"""
         try:
