@@ -145,7 +145,7 @@ st.set_page_config(
 )
 
 # Auto-refresh configuration
-AUTO_REFRESH_INTERVAL = 21600  # 6 hours in seconds (matches data collection frequency)
+AUTO_REFRESH_INTERVAL = 3600  # 1 hour
 
 # Add auto-refresh functionality
 def add_auto_refresh():
@@ -182,10 +182,9 @@ def add_auto_refresh():
     
     # Only show refresh info and add script if auto-refresh is enabled
     if AUTO_REFRESH_INTERVAL > 0:
-        refresh_time = datetime.now().strftime('%H:%M:%S')
-        next_refresh = (datetime.now() + timedelta(seconds=AUTO_REFRESH_INTERVAL)).strftime('%H:%M')
+        refresh_time = datetime.now().strftime('%H:%M:%S UTC')
         st.sidebar.markdown(f"⏰ **Last updated**: {refresh_time}")
-        st.sidebar.markdown(f"⏱️ **Next refresh**: {next_refresh} (6h)")
+        st.sidebar.markdown(f"🔄 **Auto-refresh**: Every hour")
         
         # Add a small progress bar for refresh countdown
         progress_placeholder = st.sidebar.empty()
@@ -204,9 +203,7 @@ def add_auto_refresh():
     else:
         st.sidebar.markdown("⏸️ **Auto-refresh**: Disabled")
     
-    # Manual refresh button (always available)
-    if st.sidebar.button("🔄 Refresh Now"):
-        st.rerun()
+
 
 def presentation_page():
     add_auto_refresh()  # Enable auto-refresh for this page
@@ -2029,7 +2026,7 @@ def main():
     st.sidebar.markdown("---")
     
     # Auto-refresh toggle
-    auto_refresh_enabled = st.sidebar.checkbox("🔄 Auto-refresh (6 hours)", value=True)
+    auto_refresh_enabled = st.sidebar.checkbox("🔄 Auto-refresh (1 hour)", value=True)
     if not auto_refresh_enabled:
         # Override the global setting
         global AUTO_REFRESH_INTERVAL

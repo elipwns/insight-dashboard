@@ -74,8 +74,9 @@ def monthly_predictions_page():
                 col1, col2, col3 = st.columns([2, 2, 2])
                 
                 with col1:
+                    prediction_date = datetime.fromisoformat(pred['prediction_date']).strftime('%Y-%m-%d %H:%M UTC')
                     st.metric(f"{symbol} Starting", f"${starting_price:.0f}")
-                    st.caption("Price when prediction made")
+                    st.caption(f"Price on {prediction_date}")
                 
                 with col2:
                     st.metric(f"{symbol} Target", f"${predicted_price:.0f}", f"{change_pct:+.1f}%")
@@ -107,19 +108,26 @@ def monthly_predictions_page():
                     symbol_prices['timestamp'] = pd.to_datetime(symbol_prices['timestamp'])
                     symbol_prices['date'] = symbol_prices['timestamp'].dt.date
                     
-                    # Historical prices (before prediction date)
-                    hist_prices = symbol_prices[symbol_prices['date'] < prediction_date]
+                    prediction_datetime = pd.to_datetime(pred['prediction_date'])
+                    
+                    # Historical prices (before/at prediction date) + extend to prediction point
+                    hist_prices = symbol_prices[symbol_prices['timestamp'] <= prediction_datetime]
                     if not hist_prices.empty:
+                        # Add prediction point to historical line to eliminate gap
+                        hist_x = list(hist_prices['timestamp']) + [prediction_datetime]
+                        hist_y = list(hist_prices['price']) + [pred['current_price']]
+                        
                         fig.add_trace(go.Scatter(
-                            x=hist_prices['timestamp'],
-                            y=hist_prices['price'],
+                            x=hist_x,
+                            y=hist_y,
                             mode='lines',
                             name=f'{symbol} Historical',
                             line=dict(color='white', width=3)
                         ))
                     
-                    # Current/tracking prices (after prediction date)
-                    current_prices = symbol_prices[symbol_prices['date'] >= prediction_date]
+                    # Current/tracking prices (only data collected AFTER prediction was made)
+                    prediction_datetime = pd.to_datetime(pred['prediction_date'])
+                    current_prices = symbol_prices[symbol_prices['timestamp'] > prediction_datetime]
                     if not current_prices.empty:
                         fig.add_trace(go.Scatter(
                             x=current_prices['timestamp'],
@@ -130,24 +138,26 @@ def monthly_predictions_page():
                             marker=dict(size=6, color='lime')
                         ))
                 
-                # Prediction starting point
+                # Prediction starting point (use prediction's stored price)
                 fig.add_trace(go.Scatter(
-                    x=[prediction_date],
+                    x=[prediction_datetime],
                     y=[pred['current_price']],
                     mode='markers',
                     name=f'{symbol} Prediction Start',
                     marker=dict(size=15, color='yellow', symbol='star')
                 ))
                 
-                # Prediction line to target
+                # Prediction line to target (from prediction start point)
                 fig.add_trace(go.Scatter(
-                    x=[prediction_date, target_date],
+                    x=[prediction_datetime, target_date],
                     y=[pred['current_price'], pred['predicted_price']],
                     mode='lines+markers',
                     name=f'{symbol} AI Prediction',
                     line=dict(color='orange', width=4, dash='dash'),
                     marker=dict(size=10, color='orange')
                 ))
+                
+
                 
 
             
@@ -271,8 +281,8 @@ def monthly_predictions_page():
         with st.spinner("Generating predictions..."):
             try:
                 # Import and run the monthly predictor
-                sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-                sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'ai-workbench'))
+                ai_workbench_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'ai-workbench')
+                sys.path.insert(0, ai_workbench_path)
                 from monthly_predictor import MonthlyPredictor
                 
                 predictor = MonthlyPredictor()
