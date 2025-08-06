@@ -506,6 +506,72 @@ def presentation_page():
     
     st.markdown("---")
     
+    # Trending Tickers Section
+    st.subheader("🔥 Trending Tickers")
+    
+    # Extract ticker mentions from recent data
+    if not recent_df.empty:
+        import re
+        
+        def extract_tickers(text):
+            if not isinstance(text, str):
+                return []
+            # Look for $TICKER or standalone TICKER patterns
+            patterns = [r'\$([A-Z]{2,5})\b', r'\b([A-Z]{2,5})\b']
+            tickers = []
+            for pattern in patterns:
+                matches = re.findall(pattern, text.upper())
+                tickers.extend(matches)
+            # Filter common words and focus on likely tickers
+            valid_tickers = ['GME', 'AMC', 'TSLA', 'AAPL', 'NVDA', 'MSFT', 'BTC', 'ETH', 'DOGE', 'SHIB', 'SPY', 'QQQ']
+            return [t for t in tickers if t in valid_tickers]
+        
+        # Count ticker mentions
+        ticker_mentions = {}
+        for _, row in recent_df.iterrows():
+            text = f"{row.get('title', '')} {row.get('content', '')}"
+            tickers = extract_tickers(text)
+            for ticker in tickers:
+                ticker_mentions[ticker] = ticker_mentions.get(ticker, 0) + 1
+        
+        if ticker_mentions:
+            # Sort by mentions and show top 6
+            top_tickers = sorted(ticker_mentions.items(), key=lambda x: x[1], reverse=True)[:6]
+            
+            cols = st.columns(3)
+            for i, (ticker, mentions) in enumerate(top_tickers):
+                with cols[i % 3]:
+                    # Calculate sentiment for this ticker
+                    ticker_posts = []
+                    for _, row in recent_df.iterrows():
+                        text = f"{row.get('title', '')} {row.get('content', '')}"
+                        if ticker in extract_tickers(text):
+                            ticker_posts.append(row)
+                    
+                    if ticker_posts:
+                        ticker_df = pd.DataFrame(ticker_posts)
+                        bullish_pct = (ticker_df['sentiment_label'].isin(['4 stars', '5 stars'])).mean() * 100
+                        
+                        # Color based on sentiment
+                        if bullish_pct >= 60:
+                            sentiment_color = "🟢"
+                        elif bullish_pct >= 40:
+                            sentiment_color = "🟡"
+                        else:
+                            sentiment_color = "🔴"
+                        
+                        st.metric(
+                            f"{sentiment_color} ${ticker}",
+                            f"{mentions} mentions",
+                            f"{bullish_pct:.0f}% bullish"
+                        )
+        else:
+            st.info("No trending tickers detected in recent discussions")
+    else:
+        st.info("No recent data available for ticker analysis")
+    
+    st.markdown("---")
+    
     # Monthly Prediction Performance (only show if real data exists)
     try:
         response = loader.s3_client.get_object(
