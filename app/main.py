@@ -12,7 +12,7 @@ from monthly_predictions_page import monthly_predictions_page
 
 load_dotenv()
 
-def create_sentiment_gauge(value, title, size='large', show_delta=False, delta_ref=None):
+def create_sentiment_gauge(value, title, size='large', show_delta=False, delta_ref=None, is_fear_greed=False, is_community_sentiment=False):
     """Standardized sentiment gauge with dynamic zone highlighting"""
     import plotly.graph_objects as go
     
@@ -34,13 +34,6 @@ def create_sentiment_gauge(value, title, size='large', show_delta=False, delta_r
             # Zone not filled at all
             steps.append({'range': [start, end], 'color': dim_color})
     
-    # Get color for the current zone for text/number display
-    active_color = "white"  # Default
-    for i, (start, end) in enumerate(zones):
-        if start < value <= end:
-            active_color = zone_colors[i]
-            break
-    
     # Size configurations
     if size == 'large':
         height = 400
@@ -58,6 +51,41 @@ def create_sentiment_gauge(value, title, size='large', show_delta=False, delta_r
     if show_delta and delta_ref is not None:
         mode += "+delta"
     
+    # Configure number display based on gauge type
+    if is_fear_greed:
+        # Fear & Greed text labels
+        if value <= 25:
+            text_label = "Extreme Fear"
+        elif value <= 45:
+            text_label = "Fear"
+        elif value <= 55:
+            text_label = "Neutral"
+        elif value <= 75:
+            text_label = "Greed"
+        else:
+            text_label = "Extreme Greed"
+        
+        number_config = {'font': {'size': number_size, 'color': 'white'}, 'valueformat': 'none'}
+        mode = "gauge"
+    elif is_community_sentiment:
+        # Community sentiment text labels
+        if value <= 25:
+            text_label = "Very Bearish"
+        elif value <= 45:
+            text_label = "Bearish"
+        elif value <= 55:
+            text_label = "Neutral"
+        elif value <= 75:
+            text_label = "Bullish"
+        else:
+            text_label = "Very Bullish"
+        
+        number_config = {'font': {'size': number_size, 'color': 'white'}, 'valueformat': 'none'}
+        mode = "gauge"
+    else:
+        # Regular percentage display
+        number_config = {'valueformat': '.0f', 'suffix': '%', 'font': {'size': number_size, 'color': 'white'}}
+    
     indicator = go.Indicator(
         mode=mode,
         value=value,
@@ -66,7 +94,7 @@ def create_sentiment_gauge(value, title, size='large', show_delta=False, delta_r
             'text': f"<b style='color:white'>{title}</b>",
             'font': {'size': title_size, 'color': 'white'}
         },
-        number={'valueformat': '.0f', 'suffix': '%', 'font': {'size': number_size, 'color': 'white'}},
+        number=number_config,
         gauge={
             'axis': {
                 'range': [None, 100],
@@ -90,7 +118,14 @@ def create_sentiment_gauge(value, title, size='large', show_delta=False, delta_r
     
     fig = go.Figure(indicator)
     
-    # No needle or shapes needed - gauge fills progressively
+    # Add custom text for special gauge types
+    if is_fear_greed or is_community_sentiment:
+        fig.add_annotation(
+            x=0.5, y=0.3,
+            text=f"<b style='font-size:{number_size}px; color:white'>{text_label}</b>",
+            showarrow=False,
+            xref="paper", yref="paper"
+        )
     
     fig.update_layout(
         height=height,
@@ -251,10 +286,41 @@ def presentation_page():
             title="Market Sentiment<br><span style='font-size:0.8em;color:lightgray'>Community Pulse</span>",
             size='large',
             show_delta=show_delta,
-            delta_ref=last_week_needle
+            delta_ref=last_week_needle,
+            is_community_sentiment=True
         )
         
-        st.plotly_chart(fig, use_container_width=True)
+        # Create two-column layout for gauges
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Add explanation below the gauge
+            st.caption("🗣️ **Community discussions**: Reddit posts, Bluesky sentiment, social trends")
+        
+        with col2:
+            # Load Fear & Greed data for comparison
+            fear_greed_df = loader.load_fear_greed_data()
+            
+            if not fear_greed_df.empty:
+                latest_fg = fear_greed_df.iloc[-1]
+                fg_value = latest_fg['fear_greed_value']
+                fg_classification = latest_fg['fear_greed_classification']
+                
+                # Official Fear & Greed gauge
+                fig_fg = create_sentiment_gauge(
+                    value=fg_value,
+                    title="Official Crypto<br><a href='https://alternative.me/crypto/fear-and-greed-index/' target='_blank' style='color:lightblue'>Fear & Greed Index</a>",
+                    size='large',
+                    is_fear_greed=True
+                )
+                st.plotly_chart(fig_fg, use_container_width=True)
+                
+                # Add explanation below the gauge
+                st.caption("📊 **Market-wide indicators**: Price momentum, volatility, volume, surveys")
+            else:
+                st.info("💡 Fear & Greed Index data not available. Run the fear_greed_collector to enable comparison.")
         
         # Interpretation text with contrarian signals
         col1, col2, col3 = st.columns([1, 2, 1])
@@ -271,6 +337,18 @@ def presentation_page():
             else:
                 st.error("🔥 **EXTREME BEARISH** - Market fear/panic")
                 st.caption("💡 Contrarian signal: Potential buying opportunity")
+            
+            # Show comparison if F&G data available
+            if not fear_greed_df.empty:
+                difference = needle_value - fg_value
+                if abs(difference) < 10:
+                    st.info(f"📊 **Aligned**: Community sentiment ({needle_value:.0f}%) closely matches official F&G ({fg_value}%)")
+                elif difference > 10:
+                    st.success(f"📈 **Divergence**: Community more bullish (+{difference:.0f}%) than market indicators")
+                    st.caption("💡 *Retail optimism vs market caution - potential rally fuel*")
+                else:
+                    st.warning(f"📉 **Divergence**: Community more bearish ({abs(difference):.0f}%) than market indicators")
+                    st.caption("⚠️ *Retail pessimism vs market greed - potential distribution phase*")
         
         # Small metrics below gauge
         col1, col2, col3, col4 = st.columns(4)
@@ -288,6 +366,35 @@ def presentation_page():
             else:
                 latest_data = recent_df['timestamp'].max().strftime('%Y-%m-%d') if 'timestamp' in recent_df.columns else 'N/A'
                 st.metric("Latest Data", latest_data)
+        
+        # Add gauge explanation
+        with st.expander("📖 Understanding the Gauges"):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("""
+                **🗣️ Community Sentiment**
+                - **Source**: Reddit & Bluesky discussions
+                - **Measures**: Retail investor mood
+                - **Best for**: Early sentiment shifts
+                - **Contrarian signal**: Extreme readings often mark reversals
+                """)
+            with col2:
+                st.markdown("""
+                **📊 Official Fear & Greed**
+                - **Source**: [Alternative.me](https://alternative.me/crypto/fear-and-greed-index/)
+                - **Measures**: Market-wide indicators
+                - **Includes**: Price momentum, volatility, volume
+                - **Best for**: Current market state validation
+                """)
+            
+            st.info("""
+            **💡 Divergence Signals:**
+            - **Community Bearish + Market Greedy** = Potential top/distribution
+            - **Community Bullish + Market Fearful** = Potential bottom/accumulation
+            - **Both Aligned** = Trend confirmation
+            """)
+        
+
     
         # Platform comparison (expandable)
         with st.expander("🔄 Platform Comparison (Reddit vs Bluesky)"):
