@@ -73,20 +73,19 @@ class DataLoader:
             st.error(f"Error loading historical data: {e}")
             return pd.DataFrame()
     
-    @st.cache_data(ttl=1800)  # 30 minutes TTL
+    @st.cache_data(ttl=300)  # 5 minutes TTL for faster price updates
     def load_price_data(_self) -> pd.DataFrame:
-        """Load price data from S3 with caching"""
+        """Load price data from S3 with caching (includes quick updates)"""
         try:
+            all_price_data = []
+            
+            # Load regular price data
             objects = _self.s3_client.list_objects_v2(
                 Bucket=_self.bucket_name,
                 Prefix="raw-data/price_data_"
             )
             
-            if not objects.get('Contents'):
-                return pd.DataFrame()
-            
-            all_price_data = []
-            for obj in objects['Contents']:
+            for obj in objects.get('Contents', []):
                 response = _self.s3_client.get_object(
                     Bucket=_self.bucket_name,
                     Key=obj['Key']
@@ -95,10 +94,37 @@ class DataLoader:
                 df = pd.read_csv(StringIO(csv_content))
                 all_price_data.append(df)
             
+            # Load quick price updates
+            quick_objects = _self.s3_client.list_objects_v2(
+                Bucket=_self.bucket_name,
+                Prefix="raw-data/quick_prices_"
+            )
+            
+            for obj in quick_objects.get('Contents', []):
+                response = _self.s3_client.get_object(
+                    Bucket=_self.bucket_name,
+                    Key=obj['Key']
+                )
+                csv_content = response['Body'].read().decode('utf-8')
+                df = pd.read_csv(StringIO(csv_content))
+                # Add missing columns for compatibility
+                if 'category' not in df.columns:
+                    df['category'] = 'CRYPTO'
+                if 'volume_24h' not in df.columns:
+                    df['volume_24h'] = 0
+                if 'volatility' not in df.columns:
+                    df['volatility'] = abs(df.get('change_24h', 0))
+                if 'volume_price_ratio' not in df.columns:
+                    df['volume_price_ratio'] = 0
+                if 'market_cap' not in df.columns:
+                    df['market_cap'] = 0
+                all_price_data.append(df)
+            
             if all_price_data:
-                combined_df = pd.concat(all_price_data, ignore_index=True)
+                combined_df = pd.concat(all_price_data, ignore_index=True, sort=False)
                 combined_df['timestamp'] = pd.to_datetime(combined_df['timestamp'])
-                return combined_df
+                # Keep all historical data, don't remove duplicates by symbol
+                return combined_df.sort_values('timestamp')
             
             return pd.DataFrame()
             
