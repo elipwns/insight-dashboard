@@ -6,6 +6,7 @@ import os
 import json
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.data_loader import DataLoader
+from utils.voting_system import VotingSystem
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from monthly_predictions_page import monthly_predictions_page
@@ -455,53 +456,100 @@ def presentation_page():
                     '4 stars': 'Bullish', '5 stars': 'Bullish'
                 })
                 
-                # Market category analysis with custom ordering (recent data only)
-                category_sentiment = recent_df.groupby(['category', 'sentiment_category']).size().unstack(fill_value=0)
+                # Extract crypto-specific sentiment by detecting coin mentions
+                def get_crypto_breakdown(df):
+                    import re
+                    crypto_data = {'BTC': [], 'ETH': [], 'XMR': [], 'LTC': [], 'OTHER_CRYPTO': []}
+                    
+                    for _, row in df[df['category'] == 'CRYPTO'].iterrows():
+                        text = f"{row.get('title', '')} {row.get('content', '')} {row.get('subreddit', '')}".lower()
+                        
+                        # Check for specific coin mentions
+                        if any(term in text for term in ['bitcoin', 'btc', 'r/bitcoin', 'r/btc', 'bitcoinmarkets']):
+                            crypto_data['BTC'].append(row)
+                        elif any(term in text for term in ['ethereum', 'eth', 'r/ethereum', 'r/ethtrader', 'r/ethfinance']):
+                            crypto_data['ETH'].append(row)
+                        elif any(term in text for term in ['monero', 'xmr', 'r/monero', 'r/xmrtrader']):
+                            crypto_data['XMR'].append(row)
+                        elif any(term in text for term in ['litecoin', 'ltc', 'r/litecoin', 'r/litecoinmarkets']):
+                            crypto_data['LTC'].append(row)
+                        else:
+                            crypto_data['OTHER_CRYPTO'].append(row)
+                    
+                    return crypto_data
+                
+                crypto_breakdown = get_crypto_breakdown(recent_df)
+                
+                # Calculate sentiment for each crypto
+                crypto_sentiments = {}
+                for crypto, posts in crypto_breakdown.items():
+                    if posts:
+                        crypto_df = pd.DataFrame(posts)
+                        crypto_df['sentiment_category'] = crypto_df['sentiment_label'].map({
+                            '1 star': 'Bearish', '2 stars': 'Bearish', '3 stars': 'Neutral',
+                            '4 stars': 'Bullish', '5 stars': 'Bullish'
+                        })
+                        sentiment_counts = crypto_df['sentiment_category'].value_counts(normalize=True) * 100
+                        bullish = sentiment_counts.get('Bullish', 0)
+                        neutral = sentiment_counts.get('Neutral', 0)
+                        bearish = sentiment_counts.get('Bearish', 0)
+                        crypto_sentiments[crypto] = {
+                            'bullish': bullish, 'neutral': neutral, 'bearish': bearish,
+                            'needle': bullish + (neutral * 0.5), 'count': len(posts)
+                        }
+                
+                # Non-crypto categories
+                non_crypto_df = recent_df[recent_df['category'] != 'CRYPTO']
+                category_sentiment = non_crypto_df.groupby(['category', 'sentiment_category']).size().unstack(fill_value=0)
                 category_sentiment_pct = category_sentiment.div(category_sentiment.sum(axis=1), axis=0) * 100
-                
-                # Custom category order: alphabetical except OTHER at end
-                category_order = ['CRYPTO', 'ECONOMICS', 'US_STOCKS']
-                if 'OTHER' in category_sentiment_pct.index:
-                    category_order.append('OTHER')
-                
-                # Reorder the dataframe
-                category_sentiment_pct = category_sentiment_pct.reindex([cat for cat in category_order if cat in category_sentiment_pct.index])
                 
                 # Category descriptions
                 st.markdown("""
                 **Category Definitions:**
-                - **CRYPTO**: Digital assets and blockchain (Bitcoin, Ethereum, general crypto)
-                - **ECONOMICS**: Macro trends and long-term wealth (economic policy, FIRE movement)
-                - **US_STOCKS**: Traditional equity markets (WSB, r/investing, r/stocks, value investing)
-                - **OTHER**: Miscellaneous financial discussions not categorized above
+                - **BTC/ETH/XMR/LTC**: Specific cryptocurrency sentiment
+                - **OTHER_CRYPTO**: General crypto discussions
+                - **ECONOMICS**: Macro trends and long-term wealth
+                - **US_STOCKS**: Traditional equity markets
                 """)
                 
                 import plotly.graph_objects as go
-                from plotly.subplots import make_subplots
                 
-                # Create individual gauges for each category
-                categories = category_sentiment_pct.index
-                num_categories = len(categories)
-                
-                if num_categories > 0:
-                    cols = st.columns(num_categories)
+                # Display crypto breakdown first
+                if crypto_sentiments:
+                    st.markdown("**🪙 Cryptocurrency Breakdown**")
+                    crypto_cols = st.columns(len([k for k, v in crypto_sentiments.items() if v['count'] > 0]))
+                    col_idx = 0
                     
-                    for i, category in enumerate(categories):
-                        with cols[i]:
-                            # Calculate category sentiment
+                    for crypto, sentiment in crypto_sentiments.items():
+                        if sentiment['count'] > 0:
+                            with crypto_cols[col_idx]:
+                                fig_crypto = create_sentiment_gauge(
+                                    value=sentiment['needle'],
+                                    title=crypto,
+                                    size='mini'
+                                )
+                                st.plotly_chart(fig_crypto, use_container_width=True)
+                                st.caption(f"🟢 {sentiment['bullish']:.0f}% • ⚪ {sentiment['neutral']:.0f}% • 🔴 {sentiment['bearish']:.0f}%")
+                                st.caption(f"{sentiment['count']} posts")
+                            col_idx += 1
+                
+                # Display other categories
+                if not category_sentiment_pct.empty:
+                    st.markdown("**📊 Other Categories**")
+                    other_cols = st.columns(len(category_sentiment_pct.index))
+                    
+                    for i, category in enumerate(category_sentiment_pct.index):
+                        with other_cols[i]:
                             cat_bullish = category_sentiment_pct.loc[category, 'Bullish'] if 'Bullish' in category_sentiment_pct.columns else 0
                             cat_neutral = category_sentiment_pct.loc[category, 'Neutral'] if 'Neutral' in category_sentiment_pct.columns else 0
                             cat_needle = cat_bullish + (cat_neutral * 0.5)
                             
-                            # Create mini gauge for category
                             fig_cat = create_sentiment_gauge(
                                 value=cat_needle,
                                 title=category,
                                 size='mini'
                             )
                             st.plotly_chart(fig_cat, use_container_width=True)
-                            
-                            # Show breakdown percentages
                             st.caption(f"🟢 {cat_bullish:.0f}% • ⚪ {cat_neutral:.0f}% • 🔴 {category_sentiment_pct.loc[category, 'Bearish'] if 'Bearish' in category_sentiment_pct.columns else 0:.0f}%")
     
     st.markdown("---")
@@ -1871,20 +1919,28 @@ def ipo_page():
                             fig.update_layout(height=180, margin=dict(l=5, r=5, t=35, b=5))
                             st.plotly_chart(fig, use_container_width=True)
                             st.caption(f"{post_count} posts")
+                            
+                            # Add voting widget
+                            voting_system = VotingSystem()
+                            voting_system.render_voting_widget("ipo", symbol)
                         else:
                             # Posts found but no valid sentiment
                             st.write(f"**{symbol}**")
                             st.write("📊")
                             st.caption("No Sentiment")
-                            st.write("")
-                            st.write("")
+                            
+                            # Add voting widget
+                            voting_system = VotingSystem()
+                            voting_system.render_voting_widget("ipo", symbol)
                     else:
                         # No data - show placeholder
                         st.write(f"**{symbol}**")
                         st.write("📊")
                         st.caption("No Data")
-                        st.write("")
-                        st.write("")
+                        
+                        # Add voting widget
+                        voting_system = VotingSystem()
+                        voting_system.render_voting_widget("ipo", symbol)
         
     # Recent IPO discussions
     st.subheader("📝 Recent IPO Discussions")
@@ -2097,6 +2153,11 @@ def main():
         # Override the global setting
         global AUTO_REFRESH_INTERVAL
         AUTO_REFRESH_INTERVAL = 0
+    
+    # Manual cache clear button
+    if st.sidebar.button("🔄 Force Refresh Data"):
+        st.cache_data.clear()
+        st.rerun()
     
     # Page navigation
     page = st.sidebar.selectbox("Navigate", ["📊 Insights", "🏢 IPOs", "📅 Monthly Predictions", "📈 Indicators", "🌍 Macro Analysis", "🧠 AI Insights", "⚡ Tesla Watch", "🔧 Debug"], key="page_nav")

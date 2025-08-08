@@ -9,7 +9,7 @@ class DataLoader:
         self.s3_client = boto3.client('s3')
         self.bucket_name = os.getenv('S3_BUCKET_NAME')
     
-    @st.cache_data(ttl=1800)  # 30 minutes TTL
+    @st.cache_data(ttl=600)  # 10 minutes TTL
     def load_processed_data(_self, filename: str = None) -> pd.DataFrame:
         """Load processed data from S3 with caching"""
         try:
