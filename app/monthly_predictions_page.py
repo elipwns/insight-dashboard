@@ -55,6 +55,14 @@ def monthly_predictions_page():
         # Get current price data
         price_df = loader.load_price_data()
         
+        # Sort by confidence (most confident first)
+        current_predictions.sort(key=lambda x: x['confidence_band'])
+        
+        # Highlight most confident prediction
+        if current_predictions:
+            most_confident = current_predictions[0]
+            st.success(f"🎯 **Most Confident Prediction**: {most_confident['symbol']} - AI confidence: ±{most_confident['confidence_band']*100:.1f}%")
+        
         # Clear prediction display
         for pred in current_predictions:
             symbol = pred['symbol']
@@ -79,12 +87,16 @@ def monthly_predictions_page():
                     st.caption(f"Price on {prediction_date}")
                 
                 with col2:
+                    upper_band = pred['upper_band']
+                    lower_band = pred['lower_band']
                     st.metric(f"{symbol} Target", f"${predicted_price:.0f}", f"{change_pct:+.1f}%")
-                    st.caption(f"Prediction for end of {next_month}")
+                    st.caption(f"Range: ${lower_band:.0f} to ${upper_band:.0f}")
                 
                 with col3:
-                    st.metric("Current Price", current_price)
-                    st.caption("Latest available price")
+                    confidence_pct = pred['confidence_band'] * 100
+                    confidence_level = "🟢 High" if confidence_pct < 7 else "🟡 Medium" if confidence_pct < 10 else "🔴 Low"
+                    st.metric("AI Confidence", f"{confidence_level}")
+                    st.caption(f"±{confidence_pct:.1f}% band | Current: {current_price}")
                 
                 st.markdown("---")
         
