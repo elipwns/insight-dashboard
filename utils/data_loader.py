@@ -36,7 +36,7 @@ class DataLoader:
             )
             
             csv_content = response['Body'].read().decode('utf-8')
-            df = pd.read_csv(StringIO(csv_content))
+            df = pd.read_csv(StringIO(csv_content), low_memory=False)
             return df
             
         except Exception as e:
@@ -197,3 +197,27 @@ class DataLoader:
         except Exception as e:
             st.error(f"Error loading trending data: {e}")
             return pd.DataFrame()
+    
+
+    
+    @staticmethod
+    def show_data_freshness(df):
+        """Show data age indicator in sidebar for any page"""
+        if not df.empty and 'timestamp' in df.columns:
+            df['timestamp'] = pd.to_datetime(df['timestamp'])
+            latest_data_time = df['timestamp'].max()
+            if latest_data_time.tz is None:
+                latest_data_time = latest_data_time.tz_localize('UTC')
+            now_utc = pd.Timestamp.now(tz='UTC')
+            hours_old = (now_utc - latest_data_time).total_seconds() / 3600
+            
+            if hours_old < 6:
+                freshness_icon = "🟢"
+            elif hours_old < 24:
+                freshness_icon = "🟡"
+            else:
+                freshness_icon = "🔴"
+            
+            st.sidebar.markdown(f"{freshness_icon} **Data age**: {hours_old:.1f}h old")
+        else:
+            st.sidebar.markdown("⚪ **Data**: No data available")
