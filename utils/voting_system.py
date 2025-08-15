@@ -57,27 +57,33 @@ class VotingSystem:
         """Render voting buttons and results"""
         votes_data = self.load_votes(category, symbol)
         
+        # Check if user already voted (session-based)
+        vote_key = f"voted_{category}_{symbol}"
+        has_voted = st.session_state.get(vote_key, False)
+        
         total_votes = votes_data["bullish"] + votes_data["bearish"]
         bullish_pct = (votes_data["bullish"] / total_votes * 100) if total_votes > 0 else 50
         
-        st.markdown(f"**{label} - Community Vote**")
-        
-        col1, col2, col3 = st.columns([1, 1, 2])
+        col1, col2 = st.columns(2)
         
         with col1:
-            if st.button("🟢 Bullish", key=f"bull_{category}_{symbol}"):
+            if st.button("🟢", key=f"bull_{category}_{symbol}", disabled=has_voted):
                 self.save_vote(category, "bullish", symbol)
+                st.session_state[vote_key] = True
                 st.rerun()
         
         with col2:
-            if st.button("🔴 Bearish", key=f"bear_{category}_{symbol}"):
+            if st.button("🔴", key=f"bear_{category}_{symbol}", disabled=has_voted):
                 self.save_vote(category, "bearish", symbol)
+                st.session_state[vote_key] = True
                 st.rerun()
         
-        with col3:
-            if total_votes > 0:
-                st.metric("Community", f"{bullish_pct:.0f}% bullish", f"{total_votes} votes")
-            else:
-                st.metric("Community", "No votes yet", "Be the first!")
+        if total_votes > 0:
+            st.caption(f"{bullish_pct:.0f}% bull ({total_votes})")
+        else:
+            st.caption("No votes")
+        
+        if has_voted:
+            st.caption("✅ Voted")
         
         return votes_data

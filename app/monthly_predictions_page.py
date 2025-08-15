@@ -16,6 +16,10 @@ def monthly_predictions_page():
     # Load predictions data
     loader = DataLoader()
     
+    # Show data freshness
+    df = loader.load_processed_data()
+    loader.show_data_freshness(df)
+    
     try:
         # Try to load predictions from S3
         response = loader.s3_client.get_object(

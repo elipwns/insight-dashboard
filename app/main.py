@@ -10,6 +10,7 @@ from utils.voting_system import VotingSystem
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from monthly_predictions_page import monthly_predictions_page
+from watchlist_page import watchlist_page
 
 load_dotenv()
 
@@ -217,29 +218,7 @@ def presentation_page():
     df = loader.load_processed_data()
     
     # Data freshness indicator
-    if not df.empty and 'timestamp' in df.columns:
-        df['timestamp'] = pd.to_datetime(df['timestamp'])
-        latest_data_time = df['timestamp'].max()
-        # Convert to UTC for consistent comparison
-        if latest_data_time.tz is None:
-            # Assume UTC if no timezone info
-            latest_data_time = latest_data_time.tz_localize('UTC')
-        now_utc = pd.Timestamp.now(tz='UTC')
-        hours_old = (now_utc - latest_data_time).total_seconds() / 3600
-        
-        if hours_old < 6:
-            freshness_color = "green"
-            freshness_icon = "🟢"
-        elif hours_old < 24:
-            freshness_color = "orange" 
-            freshness_icon = "🟡"
-        else:
-            freshness_color = "red"
-            freshness_icon = "🔴"
-        
-        st.sidebar.markdown(f"{freshness_icon} **Data age**: {hours_old:.1f}h old")
-    else:
-        st.sidebar.markdown("⚪ **Data**: No data available")
+    loader.show_data_freshness(df)
     
     if df.empty:
         st.warning("No data available. Please run the data collection pipeline.")
@@ -258,7 +237,7 @@ def presentation_page():
         bullish_pct = (recent_df['sentiment_label'].isin(['4 stars', '5 stars'])).mean() * 100
         neutral_pct = (recent_df['sentiment_label'] == '3 stars').mean() * 100
         bearish_pct = (recent_df['sentiment_label'].isin(['1 star', '2 stars'])).mean() * 100
-        needle_value = bullish_pct + (neutral_pct * 0.5)
+        needle_value = bullish_pct + (neutral_pct * 0.3)
         
         # Calculate last week sentiment for comparison (only if we have enough data)
         week_ago_cutoff = pd.Timestamp.now() - pd.Timedelta(days=10)
@@ -618,6 +597,8 @@ def presentation_page():
     else:
         st.info("No recent data available for ticker analysis")
     
+
+    
     st.markdown("---")
     
     # Monthly Prediction Performance (only show if real data exists)
@@ -803,6 +784,8 @@ def presentation_page():
                     st.info("No Bluesky posts in recent data")
         else:
             st.info("Platform data not available")
+
+
 
 def macro_analysis_page():
     st.title("🌍 Macro Analysis")
@@ -1626,20 +1609,8 @@ def trending_opportunities_page():
 
 def tesla_watch_page():
     st.title("⚡ Tesla Watch")
-    st.markdown("*Dedicated Tesla sentiment and risk analysis*")
+    st.markdown("*Tesla sentiment and market performance*")
     st.markdown("---")
-    
-    # Tesla warning banner
-    st.error("""
-    🚨 **TESLA RISK ASSESSMENT: HIGH VOLATILITY**
-    
-    Tesla exhibits extreme price swings driven by:
-    - Elon Musk's social media activity and public statements
-    - EV market competition and regulatory changes
-    - Autonomous driving promises vs reality
-    - Valuation disconnect from traditional auto metrics
-    - Retail investor sentiment and meme stock behavior
-    """)
     
     loader = DataLoader()
     df = loader.load_processed_data()
@@ -1694,40 +1665,89 @@ def tesla_watch_page():
         else:
             st.metric("Communities", "N/A")
     
-    # Tesla sentiment gauge
+    # Tesla vs market comparison (moved up)
+    if not price_df.empty:
+        st.subheader("📈 Tesla vs S&P 500 Performance")
+        
+        # Get Tesla and SPY data if available
+        tsla_data = price_df[price_df['symbol'] == 'TSLA'].copy()
+        spy_data = price_df[price_df['symbol'] == 'SPY'].copy()
+        
+        if not tsla_data.empty and not spy_data.empty:
+            # Simple comparison chart
+            import plotly.graph_objects as go
+            from plotly.subplots import make_subplots
+            
+            fig = make_subplots(specs=[[{"secondary_y": True}]])
+            
+            tsla_data['timestamp'] = pd.to_datetime(tsla_data['timestamp'])
+            spy_data['timestamp'] = pd.to_datetime(spy_data['timestamp'])
+            
+            fig.add_trace(go.Scatter(
+                x=tsla_data['timestamp'],
+                y=tsla_data['price'],
+                mode='lines',
+                name='TSLA',
+                line=dict(color='red', width=3)
+            ), secondary_y=False)
+            
+            fig.add_trace(go.Scatter(
+                x=spy_data['timestamp'],
+                y=spy_data['price'],
+                mode='lines',
+                name='SPY (S&P 500)',
+                line=dict(color='blue', width=2)
+            ), secondary_y=True)
+            
+            fig.update_layout(title="Tesla vs S&P 500 Performance")
+            fig.update_yaxes(title_text="TSLA Price ($)", secondary_y=False)
+            fig.update_yaxes(title_text="SPY Price ($)", secondary_y=True)
+            
+            st.plotly_chart(fig, use_container_width=True, key="tesla_vs_spy_top")
+        else:
+            st.info("Tesla price data not available for comparison")
+    
+    # Tesla sentiment pulse - TikTok style
     if 'sentiment_label' in tesla_posts.columns:
         st.subheader("⚡ Tesla Sentiment Pulse")
         
-        bullish_pct = (tesla_posts['sentiment_label'].isin(['4 stars', '5 stars'])).mean() * 100
-        neutral_pct = (tesla_posts['sentiment_label'] == '3 stars').mean() * 100
-        bearish_pct = (tesla_posts['sentiment_label'].isin(['1 star', '2 stars'])).mean() * 100
-        needle_value = bullish_pct + (neutral_pct * 0.5)
+        # Calculate weighted sentiment scores
+        star_5_count = (tesla_posts['sentiment_label'] == '5 stars').sum()
+        star_4_count = (tesla_posts['sentiment_label'] == '4 stars').sum()
+        star_2_count = (tesla_posts['sentiment_label'] == '2 stars').sum()
+        star_1_count = (tesla_posts['sentiment_label'] == '1 star').sum()
         
-        import plotly.graph_objects as go
+        green_intensity = (star_5_count * 1.0) + (star_4_count * 0.8)
+        red_intensity = (star_1_count * 1.0) + (star_2_count * 0.8)
+        total_fire = green_intensity + red_intensity
         
-        fig = create_sentiment_gauge(
-            value=needle_value,
-            title="Tesla Community Sentiment",
-            size='large'
-        )
-        fig.update_layout(height=350)
-        st.plotly_chart(fig, use_container_width=True)
+        is_bullish = green_intensity > red_intensity
         
-        # Tesla-specific interpretation
+        if total_fire > 15:
+            main_emoji = "🌋"
+            status = "HYPE" if is_bullish else "HATE"
+        elif total_fire > 10:
+            main_emoji = "🔥"
+            status = "BULL" if is_bullish else "BEAR"
+        elif total_fire > 5:
+            main_emoji = "🔥"
+            status = "BULL" if is_bullish else "BEAR"
+        elif total_fire > 2:
+            main_emoji = "💨"
+            status = "BULL" if is_bullish else "BEAR"
+        else:
+            main_emoji = "❄️"
+            status = "QUIET"
+        
+        # TikTok-style display
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
-            if needle_value >= 80:
-                st.error("🚨 **EXTREME EUPHORIA** - Peak hype, potential crash risk")
-                st.caption("⚠️ Contrarian signal: Consider taking profits")
-            elif needle_value >= 60:
-                st.success("🚀 **BULLISH MOMENTUM** - Positive Tesla sentiment")
-            elif needle_value >= 40:
-                st.info("⚖️ **MIXED SIGNALS** - Tesla sentiment uncertain")
-            elif needle_value >= 20:
-                st.warning("📉 **BEARISH TREND** - Negative Tesla sentiment")
-            else:
-                st.error("🔥 **PANIC MODE** - Extreme fear, potential bounce")
-                st.caption("💰 Contrarian signal: Possible buying opportunity")
+            st.markdown(f"<div style='text-align: center; padding: 40px;'>", unsafe_allow_html=True)
+            st.markdown(f"<h2 style='color: white; margin: 0;'>TESLA</h2>", unsafe_allow_html=True)
+            st.markdown(f"<div style='font-size: 120px; margin: 20px 0;'>{main_emoji}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='color: white; font-weight: bold; font-size: 24px;'>{status}</div>", unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_html=True)
+            st.caption(f"{len(tesla_posts)} posts analyzed")
     
     # Recent Tesla posts
     st.subheader("📝 Recent Tesla Discussions")
@@ -1792,47 +1812,7 @@ def tesla_watch_page():
         - Margin compression in core business
         """)
     
-    # Tesla vs market comparison
-    if not price_df.empty:
-        st.subheader("📉 Tesla vs Market Performance")
-        
-        # Get Tesla and SPY data if available
-        tsla_data = price_df[price_df['symbol'] == 'TSLA'].copy()
-        spy_data = price_df[price_df['symbol'] == 'SPY'].copy()
-        
-        if not tsla_data.empty and not spy_data.empty:
-            # Simple comparison chart
-            import plotly.graph_objects as go
-            from plotly.subplots import make_subplots
-            
-            fig = make_subplots(specs=[[{"secondary_y": True}]])
-            
-            tsla_data['timestamp'] = pd.to_datetime(tsla_data['timestamp'])
-            spy_data['timestamp'] = pd.to_datetime(spy_data['timestamp'])
-            
-            fig.add_trace(go.Scatter(
-                x=tsla_data['timestamp'],
-                y=tsla_data['price'],
-                mode='lines',
-                name='TSLA',
-                line=dict(color='red', width=3)
-            ), secondary_y=False)
-            
-            fig.add_trace(go.Scatter(
-                x=spy_data['timestamp'],
-                y=spy_data['price'],
-                mode='lines',
-                name='SPY (S&P 500)',
-                line=dict(color='blue', width=2)
-            ), secondary_y=True)
-            
-            fig.update_layout(title="Tesla vs S&P 500 Performance")
-            fig.update_yaxes(title_text="TSLA Price ($)", secondary_y=False)
-            fig.update_yaxes(title_text="SPY Price ($)", secondary_y=True)
-            
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("Tesla price data not available for comparison")
+
     
     # Disclaimer
     st.markdown("---")
@@ -1849,12 +1829,15 @@ def tesla_watch_page():
     """)
 
 def ipo_page():
-    st.title("🏢 IPO Tracker")
-    st.markdown("*Sentiment analysis for recent and upcoming IPOs*")
+    st.title("📈 Stocks Analysis")
+    st.markdown("*IPO sentiment, anomalies, and stock-specific insights*")
     st.markdown("---")
     
     loader = DataLoader()
     df = loader.load_processed_data()
+    
+    # Data freshness indicator
+    loader.show_data_freshness(df)
     
     if df.empty:
         st.warning("No data available. Please run the data collection pipeline.")
@@ -1872,28 +1855,116 @@ def ipo_page():
         df['content'].astype(str).str.contains(ipo_pattern, case=False, na=False)
     ].copy()
     
-    # IPO Sentiment Grid (3x3)
-    st.subheader("📊 IPO Sentiment Dashboard")
+    # Load trending data for anomalies
+    trending_df = loader.load_trending_data()
     
-    # Track 9 IPO symbols
-    ipo_symbols = ['BLSH', 'RIVN', 'LCID', 'HOOD', 'COIN', 'RBLX', 'SNOW', 'ABNB', 'UBER']
+    # Anomalies section
+    if not trending_df.empty:
+        st.subheader("🔥 Market Anomalies & Trending Stocks")
+        
+        # Filter to recent anomalies (last 24 hours)
+        trending_df['detected_at'] = pd.to_datetime(trending_df['detected_at'])
+        recent_cutoff = pd.Timestamp.now() - pd.Timedelta(hours=24)
+        recent_anomalies = trending_df[trending_df['detected_at'] >= recent_cutoff].copy()
+        
+        if not recent_anomalies.empty:
+            # Get unique symbols with highest scores
+            unique_anomalies = recent_anomalies.drop_duplicates('symbol').sort_values('composite_score', ascending=False)
+            
+            col1, col2, col3 = st.columns(3)
+            for i, (idx, anomaly) in enumerate(unique_anomalies.head(3).iterrows()):
+                with [col1, col2, col3][i]:
+                    st.metric(
+                        f"🔴 {anomaly['symbol']}",
+                        f"Score: {anomaly['composite_score']:.2f}",
+                        f"{anomaly['recent_mentions']} mentions"
+                    )
+                    st.caption(anomaly['reason'][:50] + "...")
+        else:
+            st.info("No recent anomalies detected in the last 24 hours.")
+    
+    st.markdown("---")
+    
+    # Stock sentiment section
+    st.subheader("📈 Stock Sentiment Dashboard")
+    
+    # All tracked stocks with company names
+    stock_names = {
+        'BLSH': 'Bullish',
+        'RIVN': 'Rivian', 
+        'LCID': 'Lucid Motors',
+        'HOOD': 'Robinhood',
+        'COIN': 'Coinbase',
+        'RBLX': 'Roblox',
+        'SNOW': 'Snowflake',
+        'ABNB': 'Airbnb',
+        'UBER': 'Uber'
+    }
+    all_stocks = list(stock_names.keys())
+    
+    # Calculate post counts for sorting
+    stock_data = []
+    for symbol in all_stocks:
+        # For COIN, look for Coinbase-specific mentions
+        if symbol == 'COIN':
+            coinbase_pattern = r'coinbase|\$coin\b'
+            symbol_posts = df[
+                df['title'].astype(str).str.contains(coinbase_pattern, case=False, na=False, regex=True) |
+                df['content'].astype(str).str.contains(coinbase_pattern, case=False, na=False, regex=True)
+            ].copy()
+        # For HOOD, look for Robinhood-specific mentions
+        elif symbol == 'HOOD':
+            robinhood_pattern = r'robinhood|\$hood\b'
+            symbol_posts = df[
+                df['title'].astype(str).str.contains(robinhood_pattern, case=False, na=False, regex=True) |
+                df['content'].astype(str).str.contains(robinhood_pattern, case=False, na=False, regex=True)
+            ].copy()
+        else:
+            symbol_posts = df[
+                df['title'].astype(str).str.contains(symbol.lower(), case=False, na=False) |
+                df['content'].astype(str).str.contains(symbol.lower(), case=False, na=False)
+            ].copy()
+        
+        if not symbol_posts.empty and 'sentiment_label' in symbol_posts.columns:
+            symbol_posts = symbol_posts[symbol_posts['sentiment_label'].notna()]
+            post_count = len(symbol_posts)
+        else:
+            post_count = 0
+        
+        stock_data.append((symbol, post_count))
+    
+    # Sort by post count (descending)
+    stock_data.sort(key=lambda x: x[1], reverse=True)
+    sorted_stocks = [stock[0] for stock in stock_data]
     
     import plotly.graph_objects as go
     
-    # Create 3x3 grid
-    for row in range(3):
-        cols = st.columns(3)
-        for col_idx in range(3):
-            symbol_idx = row * 3 + col_idx
-            if symbol_idx < len(ipo_symbols):
-                symbol = ipo_symbols[symbol_idx]
+    # Stock grid - display all stocks ordered by post count (5 columns for compact display)
+    for i in range(0, len(sorted_stocks), 5):
+        cols = st.columns(5)
+        for j in range(5):
+            if i + j < len(sorted_stocks):
+                symbol = sorted_stocks[i + j]
                 
-                with cols[col_idx]:
+                with cols[j]:
                     # Filter posts for this symbol
-                    symbol_posts = df[
-                        df['title'].astype(str).str.contains(symbol.lower(), case=False, na=False) |
-                        df['content'].astype(str).str.contains(symbol.lower(), case=False, na=False)
-                    ].copy()
+                    if symbol == 'COIN':
+                        coinbase_pattern = r'coinbase|\$coin\b'
+                        symbol_posts = df[
+                            df['title'].astype(str).str.contains(coinbase_pattern, case=False, na=False, regex=True) |
+                            df['content'].astype(str).str.contains(coinbase_pattern, case=False, na=False, regex=True)
+                        ].copy()
+                    elif symbol == 'HOOD':
+                        robinhood_pattern = r'robinhood|\$hood\b'
+                        symbol_posts = df[
+                            df['title'].astype(str).str.contains(robinhood_pattern, case=False, na=False, regex=True) |
+                            df['content'].astype(str).str.contains(robinhood_pattern, case=False, na=False, regex=True)
+                        ].copy()
+                    else:
+                        symbol_posts = df[
+                            df['title'].astype(str).str.contains(symbol.lower(), case=False, na=False) |
+                            df['content'].astype(str).str.contains(symbol.lower(), case=False, na=False)
+                        ].copy()
                     
                     # Check if posts have sentiment data
                     has_sentiment = not symbol_posts.empty and 'sentiment_label' in symbol_posts.columns and not symbol_posts['sentiment_label'].isna().all()
@@ -1903,26 +1974,91 @@ def ipo_page():
                         symbol_posts = symbol_posts[symbol_posts['sentiment_label'].notna()]
                         
                         if not symbol_posts.empty:
-                            bullish_pct = (symbol_posts['sentiment_label'].isin(['4 stars', '5 stars'])).mean() * 100
-                            neutral_pct = (symbol_posts['sentiment_label'] == '3 stars').mean() * 100
-                            needle_value = bullish_pct + (neutral_pct * 0.5)
                             post_count = len(symbol_posts)
                             
-
-                            
-                            # Mini gauge with standardized function
-                            fig = create_sentiment_gauge(
-                                value=needle_value,
-                                title=symbol,
-                                size='mini'
-                            )
-                            fig.update_layout(height=180, margin=dict(l=5, r=5, t=35, b=5))
-                            st.plotly_chart(fig, use_container_width=True)
+                            # TikTok-style instant visual for COIN only
+                            if symbol == 'COIN':
+                                # Calculate weighted sentiment scores
+                                star_5_count = (symbol_posts['sentiment_label'] == '5 stars').sum()
+                                star_4_count = (symbol_posts['sentiment_label'] == '4 stars').sum()
+                                star_2_count = (symbol_posts['sentiment_label'] == '2 stars').sum()
+                                star_1_count = (symbol_posts['sentiment_label'] == '1 star').sum()
+                                
+                                green_intensity = (star_5_count * 1.0) + (star_4_count * 0.8)
+                                red_intensity = (star_1_count * 1.0) + (star_2_count * 0.8)
+                                total_fire = green_intensity + red_intensity
+                                
+                                # Pure emoji visualization with sentiment
+                                is_bullish = green_intensity > red_intensity
+                                
+                                if total_fire > 15:
+                                    main_emoji = "🌋"
+                                    status = "HYPE" if is_bullish else "HATE"
+                                elif total_fire > 10:
+                                    main_emoji = "🔥"
+                                    status = "BULL" if is_bullish else "BEAR"
+                                elif total_fire > 5:
+                                    main_emoji = "🔥"
+                                    status = "BULL" if is_bullish else "BEAR"
+                                elif total_fire > 2:
+                                    main_emoji = "💨"
+                                    status = "BULL" if is_bullish else "BEAR"
+                                else:
+                                    main_emoji = "❄️"
+                                    status = "QUIET"
+                                
+                                # Pure TikTok style - just emoji and status
+                                st.markdown(f"<div style='text-align: center; padding: 20px;'>", unsafe_allow_html=True)
+                                st.markdown(f"<h3 style='color: white; margin: 0;'>{symbol}</h3>", unsafe_allow_html=True)
+                                st.markdown(f"<h4 style='color: lightgray; margin: 0;'>{stock_names[symbol]}</h4>", unsafe_allow_html=True)
+                                st.markdown(f"<div style='font-size: 60px; margin: 10px 0;'>{main_emoji}</div>", unsafe_allow_html=True)
+                                st.markdown(f"<div style='color: white; font-weight: bold;'>{status}</div>", unsafe_allow_html=True)
+                                st.markdown("</div>", unsafe_allow_html=True)
+                                
+                                # Skip the plotly chart entirely
+                                fig = None
+                            else:
+                                # Apply TikTok style to all stocks
+                                star_5_count = (symbol_posts['sentiment_label'] == '5 stars').sum()
+                                star_4_count = (symbol_posts['sentiment_label'] == '4 stars').sum()
+                                star_2_count = (symbol_posts['sentiment_label'] == '2 stars').sum()
+                                star_1_count = (symbol_posts['sentiment_label'] == '1 star').sum()
+                                
+                                green_intensity = (star_5_count * 1.0) + (star_4_count * 0.8)
+                                red_intensity = (star_1_count * 1.0) + (star_2_count * 0.8)
+                                total_fire = green_intensity + red_intensity
+                                
+                                is_bullish = green_intensity > red_intensity
+                                
+                                if total_fire > 15:
+                                    main_emoji = "🌋"
+                                    status = "HYPE" if is_bullish else "HATE"
+                                elif total_fire > 10:
+                                    main_emoji = "🔥"
+                                    status = "BULL" if is_bullish else "BEAR"
+                                elif total_fire > 5:
+                                    main_emoji = "🔥"
+                                    status = "BULL" if is_bullish else "BEAR"
+                                elif total_fire > 2:
+                                    main_emoji = "💨"
+                                    status = "BULL" if is_bullish else "BEAR"
+                                else:
+                                    main_emoji = "❄️"
+                                    status = "QUIET"
+                                
+                                st.markdown(f"<div style='text-align: center; padding: 20px;'>", unsafe_allow_html=True)
+                                st.markdown(f"<h3 style='color: white; margin: 0;'>{symbol}</h3>", unsafe_allow_html=True)
+                                st.markdown(f"<h4 style='color: lightgray; margin: 0;'>{stock_names[symbol]}</h4>", unsafe_allow_html=True)
+                                st.markdown(f"<div style='font-size: 60px; margin: 10px 0;'>{main_emoji}</div>", unsafe_allow_html=True)
+                                st.markdown(f"<div style='color: white; font-weight: bold;'>{status}</div>", unsafe_allow_html=True)
+                                st.markdown("</div>", unsafe_allow_html=True)
+                                
+                                fig = None
                             st.caption(f"{post_count} posts")
                             
                             # Add voting widget
                             voting_system = VotingSystem()
-                            voting_system.render_voting_widget("ipo", symbol)
+                            voting_system.render_voting_widget("stocks", symbol)
                         else:
                             # Posts found but no valid sentiment
                             st.write(f"**{symbol}**")
@@ -1931,7 +2067,7 @@ def ipo_page():
                             
                             # Add voting widget
                             voting_system = VotingSystem()
-                            voting_system.render_voting_widget("ipo", symbol)
+                            voting_system.render_voting_widget("stocks", symbol)
                     else:
                         # No data - show placeholder
                         st.write(f"**{symbol}**")
@@ -1940,7 +2076,7 @@ def ipo_page():
                         
                         # Add voting widget
                         voting_system = VotingSystem()
-                        voting_system.render_voting_widget("ipo", symbol)
+                        voting_system.render_voting_widget("stocks", symbol)
         
     # Recent IPO discussions
     st.subheader("📝 Recent IPO Discussions")
@@ -2105,27 +2241,79 @@ def ai_insights_page():
                     labels={'value': 'Percentage', 'index': 'Category'})
         st.plotly_chart(fig, use_container_width=True)
     
-    # Recent AI processing stats
-    st.subheader("🤖 AI Processing Statistics")
+    # System stats and AI processing
+    st.subheader("🤖 AI Processing & System Stats")
     
-    col1, col2, col3, col4 = st.columns(4)
+    price_df = loader.load_price_data()
+    
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
     
     with col1:
-        st.metric("Total Texts Analyzed", len(df))
-    
+        st.metric("Total Records", len(df))
     with col2:
+        total_posts = len(df)
+        st.metric("Community Posts", f"{total_posts:,}")
+    with col3:
+        categories = df['category'].nunique() if 'category' in df.columns else 0
+        st.metric("Market Categories", categories)
+    with col4:
         if 'sentiment_score' in df.columns:
             avg_confidence = df['sentiment_score'].mean()
             st.metric("Avg AI Confidence", f"{avg_confidence:.3f}")
+    with col5:
+        unique_sources = df['url'].nunique() if 'url' in df.columns else 0
+        st.metric("Unique Sources", unique_sources)
+    with col6:
+        st.metric("Price Data Points", len(price_df))
     
-    with col3:
-        unique_words = len(set(filtered_words))
-        st.metric("Unique Words Found", unique_words)
+    # Data validation section
+    with st.expander("📊 Data Validation & Breakdown"):
+        if not df.empty:
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.write(f"**Sentiment Data:** {len(df)} records")
+                if 'timestamp' in df.columns:
+                    df['timestamp'] = pd.to_datetime(df['timestamp'])
+                    st.write(f"Time range: {df['timestamp'].min()} to {df['timestamp'].max()}")
+                
+                if 'category' in df.columns:
+                    category_dist = df['category'].value_counts()
+                    st.write("**Category Distribution:**")
+                    category_order = ['CRYPTO', 'ECONOMICS', 'US_STOCKS']
+                    if 'OTHER' in category_dist.index:
+                        category_order.append('OTHER')
+                    ordered_dist = category_dist.reindex([cat for cat in category_order if cat in category_dist.index])
+                    st.write(ordered_dist)
+            
+            with col2:
+                if 'sentiment_label' in df.columns:
+                    sentiment_dist = df['sentiment_label'].value_counts()
+                    st.write("**Sentiment Distribution:**")
+                    st.write(sentiment_dist)
+                
+                if not price_df.empty:
+                    st.write(f"**Price Data:** {len(price_df)} records")
+                    if 'timestamp' in price_df.columns:
+                        price_df['timestamp'] = pd.to_datetime(price_df['timestamp'])
+                        st.write(f"Time range: {price_df['timestamp'].min()} to {price_df['timestamp'].max()}")
+                    st.write("**Available Assets:**", list(price_df['symbol'].unique()))
     
-    with col4:
-        if 'sentiment_label' in df.columns:
-            sentiment_variety = df['sentiment_label'].nunique()
-            st.metric("Sentiment Categories", sentiment_variety)
+    # Raw data sample
+    with st.expander("🔍 Raw Data Sample"):
+        tab1, tab2 = st.tabs(["Sentiment Data", "Price Data"])
+        
+        with tab1:
+            if not df.empty:
+                st.dataframe(df.head(20), use_container_width=True)
+            else:
+                st.warning("No sentiment data available")
+        
+        with tab2:
+            if not price_df.empty:
+                st.dataframe(price_df.head(20), use_container_width=True)
+            else:
+                st.warning("No price data available")
 
 def main():
     # Back to main site link
@@ -2160,11 +2348,15 @@ def main():
         st.rerun()
     
     # Page navigation
-    page = st.sidebar.selectbox("Navigate", ["📊 Insights", "🏢 IPOs", "📅 Monthly Predictions", "📈 Indicators", "🌍 Macro Analysis", "🧠 AI Insights", "⚡ Tesla Watch", "🔧 Debug"], key="page_nav")
+    page = st.sidebar.selectbox("Navigate", ["📊 Insights", "📋 Watchlists", "📈 Stocks", "📅 Monthly Predictions", "📈 Indicators", "🌍 Macro Analysis", "🧠 AI Insights", "⚡ Tesla Watch"], key="page_nav")
+    
+
     
     if page == "📊 Insights":
         presentation_page()
-    elif page == "🏢 IPOs":
+    elif page == "📋 Watchlists":
+        watchlist_page()
+    elif page == "📈 Stocks":
         ipo_page()
     elif page == "📅 Monthly Predictions":
         monthly_predictions_page()
@@ -2177,8 +2369,8 @@ def main():
         ai_insights_page()
     elif page == "⚡ Tesla Watch":
         tesla_watch_page()
-    else:
-        debug_page()
+    elif page == "🧠 AI Insights":
+        ai_insights_page()
 
 if __name__ == "__main__":
     main()
