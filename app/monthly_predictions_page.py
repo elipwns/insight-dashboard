@@ -217,15 +217,16 @@ def monthly_predictions_page():
         
         with col2:
             if recent_performance:
-                good_ratings = sum(1 for p in recent_performance if p['rating'] in ['Excellent', 'Good'])
-                accuracy = (good_ratings / len(recent_performance)) * 100
+                # Accuracy: predictions within confidence band
+                within_band = sum(1 for p in recent_performance if p.get('within_confidence_band', False))
+                accuracy = (within_band / len(recent_performance)) * 100
                 st.metric("Accuracy", f"{accuracy:.0f}%")
         
         with col3:
             if recent_performance:
-                ratings = [p['rating'] for p in recent_performance]
-                good_ratings = sum(1 for r in ratings if r in ['Excellent', 'Good'])
-                success_rate = (good_ratings / len(ratings)) * 100
+                # Success Rate: Excellent or Good ratings
+                good_ratings = sum(1 for p in recent_performance if p['rating'] in ['Excellent', 'Good'])
+                success_rate = (good_ratings / len(recent_performance)) * 100
                 st.metric("Success Rate", f"{success_rate:.0f}%")
         
         # Performance table
