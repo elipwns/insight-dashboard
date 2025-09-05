@@ -28,44 +28,45 @@ def monthly_predictions_page():
         )
         predictions_data = json.loads(response['Body'].read().decode('utf-8'))
     except:
-        st.warning("No monthly predictions found. Run the monthly predictor to generate forecasts.")
-        st.info("💡 The system generates monthly predictions on the 1st of each month and evaluates performance.")
-        return
+        st.warning("No monthly predictions found. Generate new predictions below.")
+        st.info("💡 **How it works**: Generate predictions for next month → Track real prices → Evaluate performance at month end")
+        predictions_data = {"predictions": [], "performance": []}
     
     # Current month predictions
     current_month = datetime.now().strftime('%Y-%m')
     next_month = (datetime.now().replace(day=1) + timedelta(days=32)).strftime('%Y-%m')
     
-    # Get all predictions for next month, then keep only the most recent for each symbol
-    all_predictions = [p for p in predictions_data.get('predictions', []) if p.get('target_month') == next_month]
+    # Show prediction status
+    st.info(f"📅 **Current Month**: {current_month} | **Predicting For**: {next_month}")
     
-    # Group by symbol and keep only the most recent prediction for each
-    current_predictions = []
-    symbols_seen = set()
+    # Get predictions for next month (should be only one per symbol)
+    current_predictions = [p for p in predictions_data.get('predictions', []) if p.get('target_month') == next_month]
     
-    # Sort by prediction_date descending to get most recent first
-    sorted_predictions = sorted(all_predictions, key=lambda x: x.get('prediction_date', ''), reverse=True)
-    
-    for pred in sorted_predictions:
-        symbol = pred['symbol']
-        if symbol not in symbols_seen:
-            current_predictions.append(pred)
-            symbols_seen.add(symbol)
+    # Show if there are predictions for other months
+    if not current_predictions:
+        all_predictions = predictions_data.get('predictions', [])
+        if all_predictions:
+            other_months = set(p['target_month'] for p in all_predictions)
+            st.info(f"📋 **Existing predictions for**: {', '.join(sorted(other_months))}")
     
     if current_predictions:
         st.subheader(f"🎯 Active Predictions for {next_month}")
-        st.markdown("*These are the current month's predictions being tracked*")
+        st.markdown("*These predictions will be evaluated at the end of the month using historical price data*")
         
         # Get current price data
         price_df = loader.load_price_data()
         
-        # Sort by confidence (most confident first)
-        current_predictions.sort(key=lambda x: x['confidence_band'])
+        # Sort by symbol for consistent display
+        current_predictions.sort(key=lambda x: x['symbol'])
         
-        # Highlight most confident prediction
-        if current_predictions:
-            most_confident = current_predictions[0]
-            st.success(f"🎯 **Most Confident Prediction**: {most_confident['symbol']} - AI confidence: ±{most_confident['confidence_band']*100:.1f}%")
+        # Show prediction summary
+        if len(current_predictions) == 1:
+            pred = current_predictions[0]
+            confidence_pct = pred['confidence_band'] * 100
+            confidence_level = "🟢 High" if confidence_pct < 7 else "🟡 Medium" if confidence_pct < 10 else "🔴 Low"
+            st.success(f"🎯 **Active Prediction**: {pred['symbol']} - {confidence_level} confidence (±{confidence_pct:.1f}%)")
+        elif len(current_predictions) > 1:
+            st.info(f"📊 **{len(current_predictions)} Active Predictions** - Tracking multiple symbols")
         
         # Clear prediction display
         for pred in current_predictions:
@@ -202,6 +203,7 @@ def monthly_predictions_page():
     
     if performance_data:
         st.subheader("🎯 Prediction Performance History")
+        st.markdown("*Performance is evaluated using actual historical prices from the target month*")
         
         # Performance metrics
         recent_performance = performance_data[-5:]  # Last 5 evaluations
@@ -274,10 +276,10 @@ def monthly_predictions_page():
     with col1:
         st.markdown("""
         **Current Model:**
-        - Type: Simple sentiment-based predictor
-        - Features: Sentiment trend, price momentum
-        - Update Frequency: Monthly
-        - Evaluation: Point prediction
+        - Type: Sentiment-based predictor with feedback
+        - Features: Sentiment trend, price momentum, community votes
+        - Learning: Adjusts based on past performance
+        - Evaluation: Historical price comparison
         """)
     
     with col2:
@@ -293,22 +295,51 @@ def monthly_predictions_page():
     # Run prediction button
     st.markdown("---")
     
-    if st.button("🔄 Generate New Monthly Predictions"):
-        with st.spinner("Generating predictions..."):
-            try:
-                # Import and run the monthly predictor
-                ai_workbench_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'ai-workbench')
-                sys.path.insert(0, ai_workbench_path)
-                from monthly_predictor import MonthlyPredictor
-                
-                predictor = MonthlyPredictor()
-                results = predictor.run_monthly_prediction_cycle()
-                
-                st.success("✅ Monthly predictions generated successfully!")
-                st.rerun()
-                
-            except Exception as e:
-                st.error(f"❌ Error generating predictions: {e}")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("🔄 Generate New Monthly Predictions"):
+            with st.spinner("Generating predictions..."):
+                try:
+                    # Import and run the monthly predictor
+                    ai_workbench_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'ai-workbench')
+                    sys.path.insert(0, ai_workbench_path)
+                    from monthly_predictor import MonthlyPredictor
+                    
+                    predictor = MonthlyPredictor()
+                    results = predictor.run_monthly_prediction_cycle()
+                    
+                    st.success("✅ Monthly predictions generated successfully!")
+                    st.rerun()
+                    
+                except Exception as e:
+                    st.error(f"❌ Error generating predictions: {e}")
+    
+    with col2:
+        if st.button("📊 Evaluate Past Performance"):
+            with st.spinner("Evaluating past predictions..."):
+                try:
+                    ai_workbench_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'ai-workbench')
+                    sys.path.insert(0, ai_workbench_path)
+                    from monthly_predictor import MonthlyPredictor
+                    
+                    predictor = MonthlyPredictor()
+                    # Just run evaluation, no new predictions
+                    history = predictor.load_predictions_history()
+                    
+                    # Evaluate August predictions if they exist
+                    performance = predictor.evaluate_last_month_prediction('BTC')
+                    if performance:
+                        history['performance'].append(performance)
+                        predictor.save_predictions_history(history)
+                        st.success(f"✅ Evaluated August prediction: {performance['rating']} ({performance['error_pct']:.1f}% error)")
+                    else:
+                        st.info("No predictions to evaluate or already evaluated")
+                    
+                    st.rerun()
+                    
+                except Exception as e:
+                    st.error(f"❌ Error evaluating performance: {e}")
     
     # Disclaimers
     st.markdown("---")
